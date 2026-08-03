@@ -668,7 +668,436 @@ baseline and **no regressions**.
 
 ---
 
-# Phases 2–7 — expand before use
+# Phase 2 — Async foundations
+
+**Purpose:** introduce the async execution model **alongside** the existing
+`multiprocessing` one, without migrating any production layer onto it yet. This
+separates "does the new foundation work, in isolation, with dummy layers" from
+"does migrating a real layer preserve behaviour" (Phase 4), so a failure cannot
+be attributed to the wrong cause.
+
+**Do not touch any existing file in Phase 2.** `LayerProcess.py`, `LayerStack.py`,
+and every real layer keep working exactly as before, unchanged. Everything in
+this phase is new, additive files. Per ADR-004 rule 5, the old run loops are
+deleted in Phase 6, not now.
+
+---
+
+> **Read first:** [ADR-003](design-adrs/ADR-003-handler-lifecycle.md),
+> [ADR-004](design-adrs/ADR-004-async-layerstack.md),
+> [ADR-005](design-adrs/ADR-005-queue-bounding.md),
+> [ADR-006](design-adrs/ADR-006-shutdown-cancellation.md),
+> [ADR-007](design-adrs/ADR-007-error-propagation.md),
+> [ADR-010](design-adrs/ADR-010-async-test-strategy.md) — all six govern this
+> phase and each ends with binding rules. Do not improvise past what they
+> specify; where a rule gives an exact code shape, use it verbatim.
+
+### Task 2.1 — Configure `pytest-asyncio`
+
+**Goal:** adopt the async test tooling before any async code exists to test it.
+
+**Files:** `pyproject.toml`, `.github/workflows/ci.yml`.
+
+**Prompt:**
+
+```
+Read docs/design-adrs/ADR-010-async-test-strategy.md first.
+
+In pyproject.toml:
+- Add "pytest-asyncio" to the "dev" optional-dependency group, alongside the
+  existing pytest, pytest-timeout, pytest-rerunfailures.
+- In the existing [tool.pytest.ini_options] section, add exactly:
+    asyncio_mode = "strict"
+    asyncio_default_fixture_loop_scope = "function"
+
+In .github/workflows/ci.yml:
+- Add pytest-asyncio to the "pip install" line in the "Install test
+  dependencies" step, alongside the existing packages.
+
+Do not change asyncio_mode to "auto". Do not set any other loop-scope option.
+Do not touch any other file.
+```
+
+**Verify:**
+```bash
+pip show pytest-asyncio | head -1 && grep -A2 "asyncio_mode" pyproject.toml && grep "pytest-asyncio" .github/workflows/ci.yml
+```
+
+**Expect:** `pytest-asyncio` reports installed (install it locally first if
+needed: `pip install pytest-asyncio`), `asyncio_mode = "strict"` and
+`asyncio_default_fixture_loop_scope = "function"` both present, and the CI
+install line includes `pytest-asyncio`.
+
+---
+
+### Task 2.2 — `AsyncLayerProcess`: async handlers and cancellation-safe lifecycle
+
+**Goal:** the async analogue of `LayerProcess` — async handlers, a single run
+loop, and a `start()`/`stop()` lifecycle that follows ADR-006 exactly. No
+`LayerStack` wiring yet; this is tested standalone with plain `asyncio.Queue`s.
+
+**Files:** creates `PiCN/Processes/AsyncLayerProcess.py` and
+`PiCN/Processes/test/test_AsyncLayerProcess.py` only.
+
+**Prompt:**
+
+```
+Read PiCN/Processes/LayerProcess.py and PiCN/Processes/PiCNProcess.py first, to
+match attribute names and docstring style. Then read
+docs/design-adrs/ADR-003-handler-lifecycle.md and
+docs/design-adrs/ADR-006-shutdown-cancellation.md in full.
+
+Create PiCN/Processes/AsyncLayerProcess.py, a NEW file, containing:
+
+1. A module constant:
+     SHUTDOWN_TIMEOUT = 5.0  # seconds. See ADR-006 "Rules for implementers", #6.
+
+2. class AsyncLayerProcess(abc.ABC):
+   - __init__(self, logger_name="AsyncLayerProcess", log_level=255): sets up
+     self.logger = Logger(logger_name, log_level) directly (do NOT inherit from
+     PiCNProcess — its __getstate__/__setstate__ pickling support exists only
+     for multiprocessing and is unnecessary here; see AGENTS.md). Initialise
+     queue_from_lower, queue_from_higher, queue_to_lower, queue_to_higher as
+     Optional[asyncio.Queue] attributes with the SAME property names as
+     LayerProcess (getters/setters), and self._task: Optional[asyncio.Task] =
+     None.
+   - Abstract methods, signature EXACTLY:
+       async def data_from_lower(self, to_lower, to_higher, data) -> None
+       async def data_from_higher(self, to_lower, to_higher, data) -> None
+   - async def run(self) -> None: the single run loop, replacing LayerProcess's
+     three _run_* variants. Implement it as one task per direction, per
+     ADR-004 rule 1:
+
+       async def run(self) -> None:
+           async def _pump_lower() -> None:
+               while True:
+                   data = await self.queue_from_lower.get()
+                   await self.data_from_lower(self.queue_to_lower, self.queue_to_higher, data)
+
+           async def _pump_higher() -> None:
+               while True:
+                   data = await self.queue_from_higher.get()
+                   await self.data_from_higher(self.queue_to_lower, self.queue_to_higher, data)
+
+           async with asyncio.TaskGroup() as tg:
+               if self.queue_from_lower is not None:
+                   tg.create_task(_pump_lower())
+               if self.queue_from_higher is not None:
+                   tg.create_task(_pump_higher())
+
+     Note: nesting these two pumps in their own TaskGroup means a handler
+     exception on one side cancels the other side of the SAME layer and
+     propagates out of run() — this is what task 2.3/2.4's stack-level
+     supervision then observes.
+   - def start(self) -> asyncio.Task: idempotent — if self._task is None or
+     already done, create it with self._task = asyncio.create_task(self.run(),
+     name=...) using the logger name. Always return self._task. Must be called
+     from within a running event loop.
+   - async def stop(self, timeout: float = SHUTDOWN_TIMEOUT) -> None: EXACTLY
+     the pattern in ADR-006's "Rules for implementers" #1 — cancel self._task,
+     await it with asyncio.wait_for(timeout=timeout), catching
+     (asyncio.CancelledError, TimeoutError). If self._task is None, return
+     immediately (no-op — ADR-006 rule #4). Set self._task = None in a finally
+     block so a stopped layer can be started again.
+
+Create PiCN/Processes/test/test_AsyncLayerProcess.py, matching the style of
+test_LayerProcess.py but using pytest-asyncio (@pytest.mark.asyncio on every
+async test, per ADR-010). Define one minimal concrete subclass of
+AsyncLayerProcess for testing (e.g. one that appends received data to a list,
+or echoes it onto the opposite queue). Cover:
+- An item placed on queue_from_lower is dispatched to data_from_lower with the
+  correct to_lower/to_higher arguments; likewise for queue_from_higher.
+- stop() on a layer that was never started is a no-op (returns promptly,
+  raises nothing).
+- start() called twice while running returns the SAME task (idempotent), and
+  does not create a second run loop.
+- Calling stop() actually stops the loop: after stop() returns, the task is
+  done, and a further item placed on the queue is never processed (assert
+  within a short asyncio.wait_for, not time.sleep — ADR-010 rule #6).
+
+Do not modify LayerProcess.py, PiCNProcess.py, or any other existing file.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Processes/test/test_AsyncLayerProcess.py -v --timeout=30
+```
+
+**Expect:** all tests pass.
+
+---
+
+### Task 2.3 — `AsyncLayerStack`: bounded queue wiring
+
+**Goal:** the async analogue of `LayerStack` — same public shape
+(`AsyncLayerStack(layers)`, `insert(layer, on_top_of=/below_of=)`), but wiring
+bounded `asyncio.Queue`s between `AsyncLayerProcess` instances instead of
+`multiprocessing.Queue`s. No start/stop or failure supervision yet — that is
+Task 2.4.
+
+**Files:** creates `PiCN/LayerStack/AsyncLayerStack.py` and
+`PiCN/LayerStack/test/test_AsyncLayerStack.py` only.
+
+**Prompt:**
+
+```
+Read PiCN/LayerStack/LayerStack.py in full first — reuse its construction and
+insert() logic almost exactly, only changing the queue type. Then read
+docs/design-adrs/ADR-004-async-layerstack.md and
+docs/design-adrs/ADR-005-queue-bounding.md in full.
+
+Create PiCN/LayerStack/AsyncLayerStack.py, a NEW file, containing:
+
+1. A module constant, comment kept VERBATIM (ADR-005's provisional value has no
+   measurement behind it yet — do not change the number or drop the comment):
+     # PROVISIONAL — not derived from measurement. See ADR-005 "Choosing the bound".
+     # Replace once per-queue depth has been measured under a representative run.
+     DEFAULT_QUEUE_SIZE = 128
+
+2. class AsyncLayerStack, mirroring LayerStack.__init__ and insert() exactly,
+   with these changes:
+   - Every queue is asyncio.Queue(maxsize=queue_size), never
+     asyncio.Queue() with no maxsize (ADR-005 rule 1/3). Accept an optional
+     queue_size: int = DEFAULT_QUEUE_SIZE constructor parameter and apply it to
+     every queue the stack creates, including inside insert()'s internal
+     __insert() helper — thread the value through, do not hardcode it twice.
+   - Layers are typed as List[AsyncLayerProcess], not List[LayerProcess].
+   - Where LayerStack.insert() raises multiprocessing.ProcessError for
+     "already started", raise RuntimeError instead (there is no process
+     concept here) with the same message. Preserve the existing TypeError and
+     ValueError behaviour for bad on_top_of/below_of arguments EXACTLY
+     (ADR-004 rule 4) — do not change when they are raised or their messages.
+   - Do NOT implement start_all()/stop_all() yet — leave that for Task 2.4.
+     A private self.__started flag guarding insert() is still needed; set it
+     to False for now (Task 2.4 will set it in start_all()). Leave a
+     "# set by start_all(), Task 2.4" comment where it belongs.
+   - Do NOT implement close_all() — asyncio.Queue needs no explicit close.
+
+Create PiCN/LayerStack/test/test_AsyncLayerStack.py, matching the style of
+test_LayerStack.py, using pytest-asyncio for anything that touches a running
+loop. Reuse the concrete AsyncLayerProcess subclass pattern from Task 2.2 (a
+tiny dummy layer) to build 2- and 3-layer stacks. Cover:
+- Construction wires queue_to_lower/queue_from_lower/queue_to_higher/
+  queue_from_higher correctly between adjacent layers, and the top/bottom
+  layers get the stack's own outer queues — same assertions as
+  test_LayerStack.py's construction tests, adapted to asyncio.Queue.
+- insert(on_top_of=...) and insert(below_of=...) both work and preserve
+  ordering, same as the existing LayerStack tests.
+- insert() still raises TypeError for layer=None and for on_top_of+below_of
+  both given or both omitted; ValueError for a reference layer not in the
+  stack.
+- Every queue the stack creates has the configured maxsize (default 128, and a
+  custom value passed to the constructor) — assert via queue.maxsize.
+- A queue that is full: awaiting put() on it blocks (does not raise, does not
+  drop) until a get() drains it. Use asyncio.wait_for with a short timeout to
+  prove the put() is genuinely pending, then drain and confirm it completes.
+
+Do not modify LayerStack.py or any other existing file.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/LayerStack/test/test_AsyncLayerStack.py -v --timeout=30 && grep -rn "asyncio.Queue()" PiCN/LayerStack/AsyncLayerStack.py
+```
+
+**Expect:** all tests pass, and the `grep` for unbounded `asyncio.Queue()`
+construction returns **empty** — every construction in the new file passes an
+explicit `maxsize`.
+
+---
+
+### Task 2.4 — Supervised start/stop: failures surface, siblings stop
+
+**Goal:** add `start_all()`/`stop_all()` to `AsyncLayerStack`, with every layer
+task supervised per ADR-007 — an unhandled exception in one layer's `run()`
+cancels every other layer and is recorded where a caller can observe it.
+
+**Files:** `PiCN/LayerStack/AsyncLayerStack.py`,
+`PiCN/LayerStack/test/test_AsyncLayerStack.py` only (both created in Task 2.3).
+
+**Prompt:**
+
+```
+Read docs/design-adrs/ADR-007-error-propagation.md and
+docs/design-adrs/ADR-006-shutdown-cancellation.md in full before starting.
+
+In PiCN/LayerStack/AsyncLayerStack.py, add to the existing AsyncLayerStack
+class (do not restructure what Task 2.3 built):
+
+- self.exception: Optional[BaseException] = None in __init__ — the first
+  unhandled layer exception, once one occurs. self._tasks: List[asyncio.Task]
+  = [] in __init__.
+- def start_all(self) -> None: sets self.__started = True (the flag Task 2.3
+  left in place), then for every layer calls task = layer.start() (from Task
+  2.2's AsyncLayerProcess), appends it to self._tasks, and attaches
+  task.add_done_callback(self._on_layer_done). This satisfies ADR-007 rule #1:
+  every create_task happens inside AsyncLayerProcess.start(), whose result is
+  retained here AND given a done-callback — never a bare, discarded
+  create_task().
+- def _on_layer_done(self, task: asyncio.Task) -> None: if task.cancelled(),
+  return (cancellation is normal shutdown, ADR-006 — not an error). Otherwise
+  read exc = task.exception(). If exc is None, return (the layer's run()
+  returned normally — should not normally happen, but is not itself a
+  failure). If exc is not None: log it with the full traceback (use
+  self.logger.error(..., exc_info=exc) or equivalent — NOT str(exc), per
+  ADR-007 rule #4), record self.exception = exc if this is the first failure
+  seen, and cancel every task in self._tasks that is not already done (this is
+  the "siblings stop" half of ADR-007).
+- async def stop_all(self, timeout: float = SHUTDOWN_TIMEOUT) -> None: cancel
+  every task in self._tasks, then await them all with a single bound: wrap
+  asyncio.gather(*self._tasks, return_exceptions=True) in
+  asyncio.wait_for(..., timeout=timeout), catching TimeoutError. A no-op if
+  self._tasks is empty (never started). Import SHUTDOWN_TIMEOUT from
+  PiCN.Processes.AsyncLayerProcess — do not redefine the constant here.
+
+Never write "except Exception" anywhere in this file — task.exception() reads
+the result without needing a try/except (ADR-007 rule #6 — only narrow,
+documented, recoverable cases get a try/except at all).
+
+In PiCN/LayerStack/test/test_AsyncLayerStack.py, add tests for:
+- A normal 2-3 layer dummy stack: start_all(), push data in at the top,
+  observe it (transformed as the dummy layers define) at the bottom, then
+  stop_all() and confirm it returns within SHUTDOWN_TIMEOUT and every task in
+  self._tasks is done.
+- A dummy layer whose data_from_lower raises a distinct, recognisable
+  exception: after start_all() and pushing the triggering data, await
+  (with asyncio.wait_for, not time.sleep) until stack.exception is set; assert
+  it IS that exception (not wrapped or stringified), and assert every OTHER
+  layer's task is now cancelled.
+- stop_all() before start_all() is a no-op (returns immediately, no error).
+
+Do not modify AsyncLayerProcess.py or any other existing file.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/LayerStack/test/test_AsyncLayerStack.py -v --timeout=30 && grep -rn "except Exception" PiCN/LayerStack/AsyncLayerStack.py PiCN/Processes/AsyncLayerProcess.py; grep -n "create_task" PiCN/LayerStack/AsyncLayerStack.py PiCN/Processes/AsyncLayerProcess.py
+```
+
+**Expect:** all tests pass; the `except Exception` grep returns **empty**;
+every `create_task` hit is immediately assigned to a variable (`task =` or
+`self._task =`), never called bare.
+
+---
+
+### Task 2.5 — Verification sweep and baseline update
+
+**Goal:** confirm Phase 2's new files satisfy every governing ADR's own
+verification command, and that the existing suite is completely unaffected —
+Phase 2 adds code, it does not change behaviour anywhere else.
+
+**Files:** updates `docs/baseline.md` only. No source changes.
+
+**Prompt:**
+
+```
+Run each of these and record the output; all must come back clean:
+
+  grep -rn "asyncio.Queue()" PiCN/Processes/AsyncLayerProcess.py PiCN/LayerStack/AsyncLayerStack.py
+  grep -rn "put_nowait\|QueueFull" PiCN/Processes/AsyncLayerProcess.py PiCN/LayerStack/AsyncLayerStack.py
+  grep -n "terminate()\|time.sleep" PiCN/Processes/AsyncLayerProcess.py PiCN/LayerStack/AsyncLayerStack.py
+  grep -n -A3 "except asyncio.CancelledError" PiCN/Processes/AsyncLayerProcess.py PiCN/LayerStack/AsyncLayerStack.py
+  grep -rn "def data_from_lower\|def data_from_higher" PiCN/Processes/AsyncLayerProcess.py | grep -v "async def"
+
+All five must produce EMPTY output (the fourth one's context lines don't
+count as a violation as long as no matched block is missing "raise" — inspect
+by eye, since grep can't verify control flow).
+
+Then run the full suite exactly as Phase 1's baseline did:
+
+  python -m pytest -v --timeout=90 -p no:cacheprovider > /tmp/phase2-run.txt 2>&1
+  tail -5 /tmp/phase2-run.txt
+
+Compare the pass/fail/error counts against the "After Phase 1" section of
+docs/baseline.md. The counts must match EXACTLY except for the new tests added
+in Tasks 2.1-2.4 (which add passes, nothing else). Any change to a previously
+passing or previously failing test outside PiCN/Processes/test/
+test_AsyncLayerProcess.py and PiCN/LayerStack/test/test_AsyncLayerStack.py is a
+regression — stop and report it, do not fix it in this task.
+
+Add a new section to docs/baseline.md titled "After Phase 2" containing:
+- The five grep results (or "empty" for each).
+- The new pass/fail/error counts and the delta versus "After Phase 1".
+- Explicit confirmation that no existing test's outcome changed.
+```
+
+**Verify:**
+```bash
+grep -A10 "After Phase 2" docs/baseline.md
+```
+
+**Expect:** the new section, all five grep checks reported empty, and no
+regressions versus "After Phase 1".
+
+---
+
+### Task 2.6 — Commit Phase 2
+
+**Goal:** land the async foundations as a single, reviewable, additive commit.
+
+**Files:** `pyproject.toml`, `.github/workflows/ci.yml`,
+`PiCN/Processes/AsyncLayerProcess.py`,
+`PiCN/Processes/test/test_AsyncLayerProcess.py`,
+`PiCN/LayerStack/AsyncLayerStack.py`,
+`PiCN/LayerStack/test/test_AsyncLayerStack.py`, `docs/baseline.md`.
+
+**Prompt:**
+
+```
+Confirm git status --short shows ONLY the files listed above (plus the usual
+ignored artifacts). If anything else changed, stop and report it — Phase 2
+must not touch existing production or test files.
+
+Stage exactly those files and commit with this message:
+
+  Phase 2: async foundations (AsyncLayerProcess, AsyncLayerStack)
+
+  Introduces the asyncio execution model alongside the existing
+  multiprocessing one, per ADR-003 through ADR-007 and ADR-010. Nothing in
+  production uses it yet -- no existing layer, ProgramLib, or test changes
+  behaviour. Verified via the new unit/integration tests plus a full-suite
+  regression run recorded in docs/baseline.md ("After Phase 2").
+
+  AsyncLayerProcess (PiCN/Processes/): async data_from_lower/data_from_higher
+  handlers, a single run() loop replacing the three _run_* variants, and a
+  cancel-then-await start()/stop() lifecycle with no terminate() or sleep().
+
+  AsyncLayerStack (PiCN/LayerStack/): wires bounded asyncio.Queue pairs
+  between layers, preserving the existing construction and insert() API
+  shape. Every layer task is supervised: an unhandled exception cancels its
+  siblings and surfaces on stack.exception rather than failing silently.
+
+  Old LayerProcess/LayerStack are untouched and keep running every real
+  layer; they are removed in Phase 6 once nothing depends on them.
+
+Then show: git status --short && git log --oneline -1
+```
+
+**Verify:**
+```bash
+git status --short && git log --oneline -1
+```
+
+**Expect:** a clean working tree apart from ignored files, and the new commit.
+
+---
+
+## Phase 2 exit criteria
+
+Do not start Phase 3 until **all** are true:
+
+- [ ] `AsyncLayerProcess` and `AsyncLayerStack` exist, each with passing tests
+- [ ] No production layer, `ProgramLibs` node, or existing test references
+      either new class — Phase 2 is purely additive
+- [ ] All five ADR-005/006/007 grep verifications return clean against the two
+      new files
+- [ ] `docs/baseline.md` has an "After Phase 2" section showing the full suite
+      unaffected (identical outcomes outside the two new test files)
+- [ ] `pytest-asyncio` runs in strict mode with function-scoped loops
+
+---
+
+# Phases 3–7 — expand before use
 
 The remaining phases are specified in [`modernization.md`](modernization.md) but
 are **not yet broken down to prompt level**. Expand each into tasks using the
@@ -676,7 +1105,6 @@ same format before handing to a small model:
 
 | Phase | Theme | Governing ADRs | Expand when |
 |---|---|---|---|
-| 2 | Async foundations — the single run loop, lifecycle, async `LayerStack` | 003, 004, 005, 006, 007, 010 | Phase 1 exits |
 | 3 | I/O boundary — `BaseInterface` contract, `UDP4Interface`, `BasicLinkLayer` | 008 | Phase 2 exits |
 | 4 | Remaining layers, simplest first | 009 | Phase 3 exits |
 | 5 | Node assembly — `ProgramLibs`, `Mgmt`, `starter/`, simulations | 006 | Phase 4 exits |
