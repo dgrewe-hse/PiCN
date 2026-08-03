@@ -80,36 +80,111 @@ implementation becomes a natural fit rather than an adaptation.
 - The 1024-descriptor `select()` ceiling disappears, so simulations can scale
   further.
 
+## What `interface_id` is
+
+**It already exists in the codebase.** `BasicLinkLayer.data_from_lower` derives
+it today as the interface's **positional index in the link layer's `interfaces`
+list**:
+
+```python
+addr_info = AddressInfo(addr, self.interfaces.index(interface))
+```
+
+and `data_from_higher` uses it to select the outbound interface:
+
+```python
+self.interfaces[addr_info.interface_id].send(packet, addr_info.address)
+```
+
+`AddressInfo.__init__(self, address, interface_id: int)` already carries this
+contract, and `FaceIDTable` maps `AddressInfo` to face IDs. **None of that
+changes.**
+
+What *does* change: today the link layer *derives* the index, because its
+`select()` loop knows which interface fired. Under a push model the interface
+must supply it — so the link layer **assigns** the index at registration and the
+interface stores and echoes it back.
+
+```python
+# BasicLinkLayer, during setup:
+for index, interface in enumerate(self.interfaces):
+    interface.register(self._inbound_queue, interface_id=index)
+```
+
+Do **not** use `id(self)`, `uuid`, or any other identity scheme. The index is
+what `AddressInfo` and `FaceIDTable` already expect, and changing it would
+break face resolution throughout the link layer.
+
+## Migration path for third-party implementations
+
+`BaseInterface` is a public extension point. Removing `file_descriptor` and
+changing `send`/`receive` breaks any external implementation, so the break is
+made **loud and recoverable** rather than silent:
+
+1. **`file_descriptor` is retained as a property that raises**
+   `NotImplementedError` with a message naming this ADR. An external
+   implementation then fails immediately with an explanation, instead of
+   mysteriously never receiving data.
+2. **Ship `LegacySyncInterfaceAdapter`**, wrapping an old-style interface
+   (blocking `receive()`, synchronous `send()`) and driving it via
+   `run_in_executor` (ADR-009). Existing implementations keep working unchanged
+   behind the adapter, at a performance cost.
+3. **Document the change** in `docs/architecture.md` and the release notes, with
+   a before/after example.
+
+The adapter is a migration aid, not a supported long-term path — mark it
+deprecated on introduction.
+
 ## Rules for implementers
 
 1. New contract:
    ```python
    async def send(self, data, addr) -> None: ...
-   def set_inbound_queue(self, queue) -> None: ...
-   # file_descriptor: REMOVED
+   def register(self, queue: asyncio.Queue, interface_id: int) -> None: ...
+
+   @property
+   def file_descriptor(self):        # retained, raises
+       raise NotImplementedError(
+           "file_descriptor was removed in the asyncio migration; "
+           "see docs/design-adrs/ADR-008-baseinterface-contract.md"
+       )
    ```
-2. Interfaces push tuples of `(data, address, interface_id)`. The link layer
-   must be able to tell which interface delivered a datagram.
+2. Interfaces push `(data, address, interface_id)`, where `interface_id` is the
+   value received in `register()` — see the section above. Never invent one.
 3. Push with `await queue.put(...)` so bounding applies (ADR-005). Do not use
    `put_nowait`.
-4. **Do not** keep `file_descriptor` "for compatibility". A vestigial property
-   invites new code to depend on it. Remove it.
+4. `file_descriptor` **is not deleted outright** — it raises with a pointer to
+   this ADR. Deleting it silently would make third-party breakage
+   undiagnosable.
 5. **Do not** call blocking `socket.recvfrom` or `socket.sendto` anywhere. Use
    the datagram transport.
 6. Preserve broadcast behaviour exactly — `enable_broadcast()` returning `False`
    by default is existing, intended behaviour for interfaces without support.
 7. Port one interface at a time: `UDP4Interface` first, then the simulation
    interface, verifying between them.
+8. Do not change `AddressInfo` or `FaceIDTable`. Their contracts are unaffected.
 
 ## Verification
 
-No file-descriptor contract remains:
+No interface *uses* a file descriptor, and the only remaining mention is the
+raising stub:
 
 ```bash
 grep -rn "file_descriptor" PiCN/ --include=*.py | grep -v test
 ```
 
-Expect **empty output**.
+Expect exactly **one hit** — the `NotImplementedError` property on
+`BaseInterface`. Any other hit means a caller still depends on it.
+
+Every interface receives its id rather than deriving one:
+
+```bash
+grep -rn "def register" PiCN/Layers/LinkLayer/Interfaces/ --include=*.py
+grep -rn "id(self)\|uuid" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
+```
+
+Expect a `register` on each interface, and **empty output** for the second — no
+invented identity schemes.
 
 No blocking socket calls in the link layer:
 

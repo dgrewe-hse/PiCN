@@ -81,18 +81,75 @@ Option A was rejected as effort spent on code scheduled for deletion.
   situation rather than merely preserving it.
 - **Phase 6 removes this code.**
 
+## Exact semantics of `set_start_method`
+
+The behaviour must be stated precisely, because the obvious call is wrong in a
+library context:
+
+| Call | Behaviour |
+|---|---|
+| `set_start_method("fork")` | Raises `RuntimeError` if a start method was **already** set |
+| `set_start_method("fork", force=True)` | **Silently overrides** an existing setting — no exception |
+| `set_start_method("fork")` on a platform without `fork` | Raises `ValueError` |
+
+`force=True` therefore does **not** need a `try/except RuntimeError` — it does
+not raise for that case. More importantly, it would silently discard a
+deliberate choice made by an embedding application. PiCN is a library; silently
+mutating process-global state that an application configured is not acceptable.
+
+**Required behaviour instead — inspect first, never override:**
+
+```python
+import multiprocessing, sys
+
+def configure_start_method(logger=None) -> None:
+    """Select 'fork' when nothing else has been chosen.
+
+    Layer objects are not picklable (they hold weakrefs, sockets and loggers),
+    so the 'spawn' default on macOS and Windows cannot start them. This is a
+    bridge until the asyncio migration removes process boundaries entirely;
+    see docs/design-adrs/ADR-002-process-start-method.md. Remove in Phase 6.
+    """
+    current = multiprocessing.get_start_method(allow_none=True)
+    if current is not None:
+        if current != "fork" and logger:
+            logger.warning(
+                "multiprocessing start method is already set to %r; leaving it "
+                "unchanged. PiCN's process-based layers require 'fork' and may "
+                "fail to start. See ADR-002.", current
+            )
+        return
+    if "fork" not in multiprocessing.get_all_start_methods():
+        if logger:
+            logger.warning("'fork' unavailable on %s; using platform default. "
+                           "Process-based layers may fail. See ADR-002.", sys.platform)
+        return
+    multiprocessing.set_start_method("fork")
+```
+
+`allow_none=True` is what makes "has anything been chosen yet?" answerable —
+without it, `get_start_method()` sets and returns the default, and the question
+can no longer be asked.
+
 ## Rules for implementers
 
-1. Use `multiprocessing.set_start_method("fork", force=True)` inside
-   `try/except RuntimeError` — it raises if a context already exists.
-2. Guard on platform support; do not force `fork` where it is unavailable.
-3. Add a comment stating **why**: layer objects are unpicklable, and this is
-   removed when asyncio lands. Without that note, a future reader will assume it
-   is a preference.
-4. **Do not** attempt to make any object picklable. Do not add `__getstate__`,
-   `__reduce__`, or remove weakrefs to "solve" this properly.
-5. **Do not** suppress the fork/threads `DeprecationWarning`.
-6. Do not touch `LayerProcess` or any layer as part of this task.
+1. **Do not use `force=True`.** Inspect with
+   `get_start_method(allow_none=True)` and only set when the result is `None`.
+2. If a start method is already set and it is not `fork`, **leave it alone** and
+   log a warning explaining that process-based layers may fail. An application's
+   deliberate configuration outranks ours.
+3. Guard platform support with `get_all_start_methods()`; do not catch
+   `ValueError` after the fact.
+4. Add a comment stating **why**: layer objects are unpicklable, and this is
+   removed when asyncio lands. Without it, a future reader assumes preference.
+5. Calling this from `PiCN/Processes/__init__.py` applies it on import. That is
+   a **process-global side effect of importing a library** — acceptable only
+   because it is non-overriding, logged, and temporary. Document it in the
+   module docstring.
+6. **Do not** attempt to make any object picklable. No `__getstate__`,
+   `__reduce__`, or weakref removal to "solve" this properly.
+7. **Do not** suppress the fork/threads `DeprecationWarning`.
+8. Do not touch `LayerProcess` or any layer as part of this task.
 
 ## Verification
 
@@ -101,3 +158,22 @@ Option A was rejected as effort spent on code scheduled for deletion.
 ```
 
 Expect `4 passed`. These fail before this change and pass after.
+
+No silent override anywhere:
+
+```bash
+grep -rn "force=True" PiCN/ --include=*.py
+```
+
+Expect **empty output**.
+
+An existing setting is respected — this must print `spawn`, not `fork`:
+
+```bash
+.venv/bin/python -c "
+import multiprocessing as mp
+mp.set_start_method('spawn')
+import PiCN.Processes
+print(mp.get_start_method())
+"
+```

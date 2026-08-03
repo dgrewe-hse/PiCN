@@ -73,6 +73,66 @@ Option C is not adopted wholesale: the picklability constraint is what made
 - Which work is actually CPU-bound must be **measured**, not assumed. See the
   rules.
 
+## Executor ownership and lifecycle
+
+**`LayerStack` owns exactly one executor.** Not layers, not `LayerProcess`, not
+per-call.
+
+Rationale: an executor is a pool of OS threads. One per layer would multiply
+threads by layer count for no benefit, and a per-call executor would create and
+destroy threads on the hot path. `LayerStack` already owns the queues and the
+task lifecycle (ADR-004, ADR-006), so it is the natural owner.
+
+Layers receive the executor by injection at construction or start. A layer must
+never create its own.
+
+### Startup and shutdown ordering
+
+Ordering is not incidental — the wrong order either orphans work or fails
+in-flight calls:
+
+**Startup:** create the executor → start layer tasks.
+
+**Shutdown** (extends ADR-006):
+
+1. Cancel all layer tasks.
+2. **Await** their completion (bounded by `SHUTDOWN_TIMEOUT`).
+3. **Then** `executor.shutdown(wait=True)`.
+
+Shutting the executor down *before* layers have stopped fails any in-flight
+`run_in_executor` call with `RuntimeError: cannot schedule new futures after
+shutdown` — surfacing as a spurious layer error during what should be a clean
+stop. Shutting down with `wait=False` leaves worker threads running past process
+teardown.
+
+A layer awaiting an executor result when cancelled will raise `CancelledError`
+at that `await`. The submitted function **still runs to completion** in its
+thread — cancellation does not interrupt a thread. Executor functions must
+therefore be safe to complete after their caller is gone, which is another
+reason for the purity rule below.
+
+### Thread-safety rules
+
+Under multiprocessing, each layer had its own address space, so state was
+isolated by construction. Under asyncio, layer state was protected by the event
+loop's single-threaded execution. **An executor removes both guarantees**: a
+worker thread runs concurrently with the loop.
+
+The rule is therefore strict — **executor functions are pure with respect to
+layer state**:
+
+- Take everything needed as arguments.
+- Return everything produced as a return value.
+- Touch **no** layer attributes, no module-level mutable state, no shared
+  collections.
+
+Do not pass `self` or a layer object into the executor. If a function needs
+layer data, pass a copy or an immutable view.
+
+Where shared mutable state is genuinely unavoidable, it must be protected by an
+explicit `threading.Lock`, and the call site must carry a comment justifying
+why purity was not possible. Treat that as a last resort requiring review.
+
 ## Rules for implementers
 
 1. Do not dispatch to an executor speculatively. **Measure first**: if a
@@ -82,14 +142,19 @@ Option C is not adopted wholesale: the picklability constraint is what made
    ```python
    result = await loop.run_in_executor(self._executor, fn, *args)
    ```
-3. The executor is owned by the stack, created at startup and shut down with it.
-   **Do not** create an executor per call or per layer.
-4. Anything running in the executor must not touch event-loop objects.
-   Specifically forbidden inside executor functions: `asyncio.Queue`, any
-   coroutine, `loop.*`. Return a value and let the caller do the awaiting.
-5. **Do not** use `ProcessPoolExecutor` without first confirming the arguments
+3. **`LayerStack` owns the single executor.** Layers receive it by injection and
+   never create one. No per-call or per-layer executors.
+4. Shutdown order is fixed: cancel layers → await layers → `executor.shutdown(wait=True)`.
+   Never shut the executor down first.
+5. Executor functions are **pure with respect to layer state**: arguments in,
+   return value out. Do not pass `self` or any layer object.
+6. Anything running in the executor must not touch event-loop objects.
+   Specifically forbidden: `asyncio.Queue`, any coroutine, `loop.*`.
+7. Shared mutable state requires an explicit `threading.Lock` **and** a comment
+   justifying why the function could not be pure.
+8. **Do not** use `ProcessPoolExecutor` without first confirming the arguments
    and results are picklable — and record that check.
-6. Do not "solve" a slow layer by adding sleeps or yielding with
+9. Do not "solve" a slow layer by adding sleeps or yielding with
    `await asyncio.sleep(0)`. That masks the stall rather than removing it.
 
 ## Verification
@@ -110,3 +175,21 @@ PYTHONASYNCIODEBUG=1 .venv/bin/python -m pytest PiCN/Layers/NFNLayer -q --timeou
 ```
 
 Investigate every warning. Not all are faults, but each needs an explanation.
+
+Exactly one executor is created, and only by `LayerStack`:
+
+```bash
+grep -rn "ThreadPoolExecutor\|ProcessPoolExecutor" PiCN/ --include=*.py | grep -v test
+```
+
+Expect hits **only** in `LayerStack`. Any occurrence inside a layer violates
+ownership.
+
+No layer object crosses into a worker thread:
+
+```bash
+grep -rn "run_in_executor" PiCN/ --include=*.py | grep -v test
+```
+
+Inspect each call: the function must not be a bound method of a layer, and `self`
+must not appear in the arguments.

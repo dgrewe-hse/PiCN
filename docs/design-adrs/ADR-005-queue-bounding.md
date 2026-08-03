@@ -66,21 +66,56 @@ measurement and every test in ways that look like bugs elsewhere.
 - Benchmarks may need a larger bound than the default. That is a configuration
   change, not a code change.
 
+## Choosing the bound
+
+**There is no evidence behind any particular number yet, and none is invented
+here.** The bound is a tunable constant with a documented method for settling
+it, not a value presented as considered.
+
+The constraint is two-sided:
+
+- **Too small** — normal bursts block producers, adding latency that is an
+  artifact of the setting rather than of the system.
+- **Too large** — approaches unbounded: memory grows and a slow layer stays
+  invisible, which is the defect this ADR exists to remove.
+
+**Method for settling it, once the stack runs:**
+
+1. Instrument `qsize()` per inter-layer queue during a representative run.
+2. Record the **maximum observed depth** per queue under normal load.
+3. Set the bound to roughly 2–4× that maximum: large enough to absorb bursts,
+   small enough that a genuinely stuck layer hits the ceiling and becomes
+   visible.
+4. Record the measured maxima and the chosen value in the commit message, so the
+   number has provenance.
+
+Until that measurement exists, the starting value is explicitly provisional:
+
+```python
+# PROVISIONAL — not derived from measurement. See ADR-005 "Choosing the bound".
+# Replace once per-queue depth has been measured under a representative run.
+DEFAULT_QUEUE_SIZE = 128
+```
+
+A queue sitting persistently at its bound is a **diagnostic finding**, not a
+sizing problem. Raising the bound to make the symptom disappear hides the slow
+layer instead of identifying it.
+
 ## Rules for implementers
 
-1. Define the default once:
-   ```python
-   DEFAULT_QUEUE_SIZE = 128   # tune with evidence, not guesswork
-   ```
-   Do not scatter numeric literals.
-2. `LayerStack` accepts an optional queue size and applies it to every queue it
+1. Define the default once, with the provisional comment above kept verbatim
+   until a measurement replaces it. Do not scatter numeric literals.
+2. **Do not silently raise the default** to make a test or benchmark pass. If a
+   specific case needs more headroom, pass a larger size at construction and say
+   why.
+3. `LayerStack` accepts an optional queue size and applies it to every queue it
    creates.
-3. Always `await queue.put(item)`. **Do not** use `put_nowait` to dodge
+4. Always `await queue.put(item)`. **Do not** use `put_nowait` to dodge
    blocking — that reintroduces unbounded growth or silent drops.
-4. **Never** catch `asyncio.QueueFull` and discard the item. If you believe an
+5. **Never** catch `asyncio.QueueFull` and discard the item. If you believe an
    item may be dropped, stop and report it.
-5. If a benchmark or test needs more headroom, pass a larger size at
-   construction. Do not raise the global default to make one case pass.
+6. Expose `qsize()` per queue for the measurement in "Choosing the bound" —
+   without it the constant can never be settled with evidence.
 
 ## Verification
 
