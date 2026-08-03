@@ -241,11 +241,31 @@ retained executor usage.
 
 ---
 
-### Phase 7 — Test completion and CI
+### Phase 7 — Test infrastructure and CI
+
+Deliberately separated from coverage work (Phase 8). CI should exist **before**
+coverage expansion begins, so that new tests are themselves verified by the
+pipeline and any regression surfaces immediately rather than at the end of an
+open-ended testing effort.
 
 - [ ] Migrate remaining `nose`-style assertions to pytest idiom where they block
       progress; do not rewrite tests gratuitously.
 - [ ] Add `pytest-asyncio` fixtures and a consistent event-loop policy for tests.
+- [ ] Add GitHub Actions CI: run the suite on the supported Python range,
+      ideally on Linux plus at least one other platform.
+- [ ] Record the final test state and compare against the Phase 0 baseline —
+      this comparison is what demonstrates the migration preserved behaviour,
+      and is the single most important artifact of the whole effort.
+
+**Exit criteria:** CI green on the existing suite; the Phase 0 baseline
+comparison documented and showing no unexplained regressions.
+
+---
+
+### Phase 8 — Coverage completion
+
+Open-ended by nature, and safe to run continuously rather than as a gate.
+
 - [ ] Fill coverage gaps identified during migration. Likely candidates, based
       on the current structure:
   - PIT expiry and timeout paths
@@ -256,12 +276,9 @@ retained executor usage.
   - Chunking boundary conditions (exact-multiple sizes, single-byte payloads)
   - Clean shutdown and cancellation under load
   - Malformed packet handling at the encoding layer
-- [ ] Add GitHub Actions CI: run the suite on the supported Python range,
-      ideally on Linux plus at least one other platform.
-- [ ] Record the final test state and compare against the Phase 0 baseline.
 
-**Exit criteria:** CI green; test coverage meaningfully above the Phase 0
-baseline; the baseline comparison documented.
+**Exit criteria:** coverage meaningfully above the Phase 0 baseline, with the
+gap list above addressed or explicitly deferred with reasons.
 
 ---
 
