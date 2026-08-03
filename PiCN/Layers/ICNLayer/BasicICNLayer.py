@@ -222,5 +222,5 @@ class BasicICNLayer(LayerProcess):
             pass
         finally:
             t = threading.Timer(self._ageing_interval, self.ageing)
-            t.setDaemon(True)
+            t.daemon = True
             t.start()

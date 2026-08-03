@@ -55,7 +55,7 @@ class PinnedComputationLayer(LayerProcess):
                 self.logger.info("Result returned")
                 arguments = [self.pinned_function_square, self.params, interest.name]
                 t = threading.Thread(target=self.executePinnedFunction, args=arguments)
-                t.setDaemon(True)
+                t.daemon = True
                 t.start()
                 return
             else:

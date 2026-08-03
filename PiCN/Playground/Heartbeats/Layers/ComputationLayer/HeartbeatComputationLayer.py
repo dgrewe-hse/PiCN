@@ -54,7 +54,7 @@ class HeartbeatComputationLayer(LayerProcess):
                 # start thread to do computation
                 arguments = [packet_id, self.pinned_function_square, self.params, interest.name]
                 t = threading.Thread(target=self.executePinnedFunction, args=arguments)
-                t.setDaemon(True)
+                t.daemon = True
                 t.start()
                 # start thread to send heartbeat
                 # -- TODO (here?)
@@ -89,7 +89,7 @@ class HeartbeatComputationLayer(LayerProcess):
         stop_heartbeat_event = threading.Event()
         arguments = [packet_id, interest_name, heartbeat_interval, stop_heartbeat_event]
         t = threading.Thread(target=self.heartbeat, args=arguments)
-        t.setDaemon(True)
+        t.daemon = True
         t.start()
         # start computation
         self.logger.info("Start computation for: " + interest_name.to_string())
