@@ -3,7 +3,7 @@ from typing import List, Tuple
 
 import multiprocessing
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PiCN.Layers.LinkLayer.Interfaces import AddressInfo
 from PiCN.Processes import LayerProcess
@@ -43,7 +43,7 @@ class BasicRoutingLayer(LayerProcess):
             self.logger.warn('Expects [fid, Packet] from lower')
             return
         rcv_fid, packet = data
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if packet.name == self._prefix:
             if isinstance(packet, Interest):
                 self.logger.info('Received routing interest')

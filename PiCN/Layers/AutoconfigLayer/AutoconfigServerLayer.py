@@ -2,7 +2,7 @@
 from typing import List, Tuple, Optional
 
 import multiprocessing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PiCN.Layers.LinkLayer import BasicLinkLayer
 from PiCN.Layers.LinkLayer.Interfaces import AddressInfo, UDP4Interface
@@ -103,7 +103,7 @@ class AutoconfigServerLayer(LayerProcess):
         self.logger.info('Service List requested')
         srvprefix = Name(interest.name.components[len(_AUTOCONFIG_SERVICE_LIST_PREFIX):])
         content = ''
-        now: datetime = datetime.utcnow()
+        now: datetime = datetime.now(timezone.utc)
         for service, _, timeout in self._known_services:
             service: Name = service
             timeout: datetime = timeout
@@ -143,7 +143,7 @@ class AutoconfigServerLayer(LayerProcess):
         prefix_candidates.sort(key=lambda p: len(p[0]), reverse=True)
         registration_prefix, local_only = prefix_candidates[0]
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         timeout = now + self._service_registration_timeout
 
         for i in range(len(self._known_services)):
@@ -171,6 +171,6 @@ class AutoconfigServerLayer(LayerProcess):
             container: List[ForwardingInformationBaseEntry] = self.fib.container
             container = self.rib.build_fib(container)
             self.fib.container = container
-        self._known_services.append((srvname, srvaddr, datetime.utcnow() + self._service_registration_timeout))
+        self._known_services.append((srvname, srvaddr, datetime.now(timezone.utc) + self._service_registration_timeout))
         ack: Content = Content(interest.name, str(int(self._service_registration_timeout.total_seconds())) + '\n')
         return ack
