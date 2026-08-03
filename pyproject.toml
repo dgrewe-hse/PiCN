@@ -8,7 +8,10 @@ version = "0.1.0"
 description = "A modular Python ICN implementation"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
-requires-python = ">=3.6"
+# The modernization effort on this branch targets Python 3.14 exclusively
+# (see AGENTS.md / docs/modernization.md). Earlier classifiers below record
+# what upstream historically supported before this branch's floor was raised.
+requires-python = ">=3.14"
 authors = [
     {name = "Christopher Scherb", email = "christopher.scherb@unibas.ch"},
 ]
@@ -29,6 +32,7 @@ classifiers = [
 
 [project.optional-dependencies]
 opencv = ["opencv-python>=4.2"]
+dev = ["pytest", "pytest-timeout", "pytest-rerunfailures"]
 
 [project.scripts]
 # No console scripts — entry points live in starter/ and ProgramLibs/
