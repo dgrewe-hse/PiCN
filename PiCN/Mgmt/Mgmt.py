@@ -179,7 +179,7 @@ class Mgmt(PiCNProcess):
             self.mgmt(mgmt_sock)
 
     def _run(self, mgmt_sock):
-        if os.name is 'nt':
+        if os.name == 'nt':
             self._run_select(mgmt_sock)
         else:
             self._run_poll(mgmt_sock)
