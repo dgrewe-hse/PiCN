@@ -52,17 +52,17 @@ class test_RoutingLayerFullStack(unittest.TestCase):
         shutil.rmtree('/tmp/test_repo')
 
     def test_network(self):
-        """
+        r"""
                 C
                 |
              F[9004] -- F[9003]
-             /   \         /
-            /     \       /
-           /       \     /
+             /   \\         /
+            /     \\       /
+           /       \\     /
         F[9002] -- F[9001]
-            \        /
-             \      /
-              \    /
+            \\        /
+             \\      /
+              \\    /
              F[9000]
                 |
                 R
