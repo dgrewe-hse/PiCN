@@ -98,3 +98,54 @@ Exit criteria from `docs/modernization.md`:
 To verify Phase 1 changes meet this: re-run the same test suite and confirm:
 - No new failures vs this baseline
 - No syntax warnings during collection (compile with `-W error::SyntaxWarning`)
+
+---
+
+## After Phase 1 (Task 1.8, recorded retroactively)
+
+**This section was originally skipped** — Phase 1 was treated as exited without
+it. Filed in retroactively while investigating apparent regressions, using a
+fresh `.venv` (Python 3.14.0, pytest 9.1.1) on macOS/arm64.
+
+### Full-suite run
+
+```
+python -m pytest -v --timeout=60 -p no:cacheprovider
+469 collected, 0 collection errors, 0 SyntaxWarnings
+464 passed, 5 failed, in ~10.5 minutes
+```
+
+This is a full run, not a batch estimate — every collected test executed. It is
+a strictly larger scope than the ~237-test batch estimate above, so the raw
+numbers aren't directly comparable; what matters is that no `SyntaxWarning`
+survives collection and every failure below is accounted for.
+
+### The 5 failures, and why none of them are migration regressions
+
+| Test | Root cause |
+|---|---|
+| `test_x86Executor.py::test_execute_shared_lib` | `setUp()` does `open('NFN-x86-file-osx', 'r')` — a path relative to the **current working directory**, not the test file. `nose` used to `chdir` into each test's directory; `pytest` does not. Confirmed by running the file from its own directory: the `FileNotFoundError` disappears and a *different*, real bug surfaces in `x86Executor.py:56` (`print(e.with_traceback())`, missing its required argument) — from commit `f295131`, dated 2018-11-29, years before this modernization effort. **On Linux (the CI runner), this is moot**: `setUp()` returns before the `open()` call when `platform.system() != 'Darwin'`, so the test just skips. |
+| `test_x86Executor.py::test_get_entry_function_name` | Same cause as above. |
+| `test_FetchNFN.py::…test_fetch_single_data_from_repo_over_forwarder_native_code` (×2) | Same CWD-relative-path pattern, same `NFN-x86-file-osx` file, same OSX-only gate (`self.skipTest(...)` for non-Darwin) — the `open()` calls in these tests are placed *after* the platform check, but `test_x86Executor.py`'s is in `setUp()`, which the guard doesn't cover. On Linux, both these skip cleanly. |
+| `test_NFNForwarder.py::test_NFNForwarder_compute_subcomp_two_nodes` | `OSError: [Errno 48] Address already in use` in `Mgmt.py:39`. Reruns in isolation immediately after failing: passes. Root cause: `NFNForwarder.__init__` reuses its link layer's ephemeral UDP port number as the Mgmt TCP port (`mgmt_port = interfaces[0].get_port()`). `stop_process()` tears down the previous test's forwarders with `terminate()` + a fixed `sleep()`, not a wait for the socket to actually close (see AGENTS.md, ADR-006) — so under load the OS can reissue an ephemeral port that collides with a Mgmt socket that hasn't finished closing yet. This is pre-existing test-infrastructure flakiness that Phase 1's fork-start-method fix (ADR-002) made *more likely to be reached* (under the previous default "spawn" behaviour, most of these tests errored out earlier on a pickling failure, before ever getting far enough to race on a socket) — not a new bug, but a newly-exercised one. Mitigated for now with `@pytest.mark.flaky(reruns=2)` on the affected test classes (test-only change, documented in `test_NFNForwarder.py`); the real fix is ADR-006's cooperative-cancellation shutdown in Phase 2+. |
+
+**No SyntaxWarnings and no other regressions were found.** The asyncio migration
+itself has not started on this branch (verified via `grep -rn "async def
+data_from_lower"` returning nothing) — none of the above is caused by it.
+
+### Gaps between this plan and what was actually merged
+
+Recorded here so future baseline comparisons aren't misled by assuming these
+tasks completed when their PRs were merged:
+
+- **Task 0.2** (`.gitignore` + untrack `.pytest_cache`) — was not done; closed
+  retroactively alongside this update.
+- **Task 0.7** (characterization test) — was not done; closed retroactively as
+  `PiCN/Layers/ICNLayer/test/test_characterization.py`.
+- **Task 1.5** (`setDaemon()` → `.daemon = True`) — was not done; the
+  deprecation warning was still present in every run. Closed retroactively
+  across all 4 active call sites found by `grep -rn "setDaemon" PiCN/`.
+- **Task 1.1**'s `pyproject.toml` spec deviated from what shipped: no `dev`
+  optional-dependency group existed (added retroactively), and
+  `requires-python` was `>=3.6` instead of reflecting this branch's actual
+  Python 3.14-only target (corrected retroactively).
