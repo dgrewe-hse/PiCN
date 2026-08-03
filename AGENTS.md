@@ -15,8 +15,13 @@ types (forwarder, repository, NFN node).
 ## What this branch is doing
 
 Branch `modernization/asyncio-python314` carries a **modernization effort**, not
-a feature. See [`docs/modernization.md`](docs/modernization.md) for the full
-phased plan. In short:
+a feature.
+
+- [`docs/modernization.md`](docs/modernization.md) — the phased plan and why it exists
+- [`docs/agent-tasks.md`](docs/agent-tasks.md) — atomic tasks with exact prompts and verification
+- [`docs/design-adrs/`](docs/design-adrs/README.md) — the design decisions, each with binding rules
+
+In short:
 
 1. Bring the codebase to current Python (3.6-era → 3.14).
 2. Replace the `multiprocessing`-per-layer architecture with `asyncio`.

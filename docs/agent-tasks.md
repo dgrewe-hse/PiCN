@@ -6,6 +6,19 @@ Execution plan for AI coding agents, written for **small local models**
 Read [`AGENTS.md`](../AGENTS.md) first for repository conventions, and
 [`modernization.md`](modernization.md) for why this work exists.
 
+**Before each phase, read that phase's ADRs** in
+[`design-adrs/`](design-adrs/README.md). The task plan says *what to do*; the
+ADRs say *why, and what not to do instead*. Each ADR ends with binding rules and
+a verification command.
+
+| Phase | ADRs to read first |
+|---|---|
+| 0 | ADR-001 |
+| 1 | ADR-002 |
+| 2 | ADR-003, ADR-004, ADR-005, ADR-006, ADR-007, ADR-010 |
+| 3 | ADR-008 |
+| 4 | ADR-009 |
+
 ---
 
 ## How to use this document
@@ -57,6 +70,9 @@ they differ a lot, record that in the baseline rather than trying to match these
 **Do not change any code in Phase 0.** Only add files.
 
 ---
+
+> **Read first:** [ADR-001](design-adrs/ADR-001-baseline-first-migration.md) —
+> why nothing is fixed during Phase 0.
 
 ### Task 0.1 — Create the development environment
 
@@ -374,6 +390,9 @@ work", so a later failure cannot be confused with a version problem.
 
 ---
 
+> **Read first:** [ADR-002](design-adrs/ADR-002-process-start-method.md) — why
+> `fork` is set explicitly, and why *not* to make objects picklable.
+
 ### Task 1.1 — Add `pyproject.toml`
 
 **Goal:** declare build metadata and dev dependencies.
@@ -655,15 +674,19 @@ The remaining phases are specified in [`modernization.md`](modernization.md) but
 are **not yet broken down to prompt level**. Expand each into tasks using the
 same format before handing to a small model:
 
-| Phase | Theme | Expand when |
-|---|---|---|
-| 2 | Async foundations — the single run loop, lifecycle, async `LayerStack` | Phase 1 exits |
-| 3 | I/O boundary — `BaseInterface` contract, `UDP4Interface`, `BasicLinkLayer` | Phase 2 exits |
-| 4 | Remaining layers, simplest first | Phase 3 exits |
-| 5 | Node assembly — `ProgramLibs`, `Mgmt`, `starter/`, simulations | Phase 4 exits |
-| 6 | Delete the multiprocessing scaffolding | Phase 5 exits |
-| 7 | Test infrastructure and CI | Phase 6 exits |
-| 8 | Coverage completion (runs continuously) | Any time after 7 |
+| Phase | Theme | Governing ADRs | Expand when |
+|---|---|---|---|
+| 2 | Async foundations — the single run loop, lifecycle, async `LayerStack` | 003, 004, 005, 006, 007, 010 | Phase 1 exits |
+| 3 | I/O boundary — `BaseInterface` contract, `UDP4Interface`, `BasicLinkLayer` | 008 | Phase 2 exits |
+| 4 | Remaining layers, simplest first | 009 | Phase 3 exits |
+| 5 | Node assembly — `ProgramLibs`, `Mgmt`, `starter/`, simulations | 006 | Phase 4 exits |
+| 6 | Delete the multiprocessing scaffolding | 002, 004 | Phase 5 exits |
+| 7 | Test infrastructure and CI | 010 | Phase 6 exits |
+| 8 | Coverage completion (runs continuously) | 010 | Any time after 7 |
+
+The design decisions for these phases are **already made** — see
+[`design-adrs/`](design-adrs/README.md). What is missing is only the breakdown
+into atomic tasks, which depends on what the preceding phase actually produced.
 
 **Why not written now:** each phase's tasks depend on what the previous phase
 actually produced. Writing them in advance would specify against a codebase that
