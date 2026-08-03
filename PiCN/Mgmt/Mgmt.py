@@ -39,7 +39,7 @@ class Mgmt(PiCNProcess):
         self.mgmt_sock.bind(("127.0.0.1", self._port))
         self.mgmt_sock.listen(5)
         self._buffersize = 8192
-        if os.name is not 'nt':
+        if os.name != 'nt':
             self.shutdown = shutdown #function pointer
         else:
             self.logger.critical("Shutdown not available on NT platform")
