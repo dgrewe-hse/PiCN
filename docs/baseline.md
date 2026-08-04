@@ -455,3 +455,44 @@ grep -rn "AsyncICNForwarder\|AsyncNFNForwarder" PiCN/ProgramLibs/
 `PiCN/Simulations/SimulationsTutorial_async.py` (mirrors
 `SimulationsTutorial.py`): two `NFNForwarder` + `Fetch` on
 `SimulationBus`, result `HelloWorld`.
+
+## Phase 6 inventory (Task 6.0)
+
+Verified by `rg` on 2026-08-04. Dual runtime retained — sync scaffolding
+stays.
+
+### KEEP (do not delete in Phase 6)
+
+| Item | Why |
+|---|---|
+| `LayerProcess` + `_run_poll` / `_run_select` / `_run_sleep` / `in_unittest` | Sync ProgramLibs default path |
+| `PiCNProcess` `__getstate__` / `__setstate__` | Sync fork pickling |
+| `SyncRunStrategy` + `BasicLinkLayer` select loops | Sync link layer |
+| `AsyncRunStrategy` | Still used by `test_BasicLinkLayer_async` (Phase 3 characterization); keep with SyncRunStrategy |
+| Sync `Mgmt`, `PiCNSyncDataStructFactory`, `configure_start_method` | Sync runtime |
+| All sync `Basic*Layer` wrappers | Sync stacks |
+| `SimulationBus` + `SimulationInterface` MP queues | Explicit exception (async nodes + sync bus) |
+| `DataOffloadingChunklayer` (+ Simple) | Unit tests + (until 6.2) `NFNForwarderData` sync |
+
+### CANDIDATE DELETE (no non-test production importers)
+
+| Module | Evidence |
+|---|---|
+| `LegacySyncInterfaceAdapter` | Only `Interfaces/__init__.py` export + `test_LegacySyncInterfaceAdapter.py`; zero ProgramLib / layer callers |
+
+### PLAYGROUND (Task 6.3 — port or delete)
+
+Files importing `LayerProcess` and/or `multiprocessing`:
+
+- `AssistedSharing/FetchLayer.py`, `RepoLayer.py`, `RepoStack.py`
+- `Heartbeats/.../HeartbeatComputationLayer.py`, `HeartbeatNetworkLayer.py`, `HeartbeatPacketEncodingLayer.py`
+- `BeeSensRepo/StorageLayer.py`, `InterfaceLayer.py`
+- `PinnedNFN/PinnedComputationLayer.py`
+
+### DATAOFFLOAD (Task 6.2 — port or delete)
+
+| Symbol | Callers |
+|---|---|
+| `DataOffloadingChunklayer` | `NFNForwarderData` (sync); `test_UploadChunkLayer` |
+| `DataOffloadingChunklayerSimple` | `test_UploadChunkLayerSimple` only |
+| `NFNForwarderData` | `Simulations/DataOffloading/*`, `MobilitySimulations/MobilitySimulation.py` |
