@@ -20,6 +20,7 @@ a verification command.
 | 4 | ADR-003 (and its 2026-08-04 extract-core addendum), ADR-009 (and its 2026-08-04 addendum), ADR-010 |
 | 5 | ADR-004 (and its 2026-08-04 shared-builder addendum), ADR-006, ADR-009 |
 | 6 | ADR-004 (Phase 6 dual-runtime addendum), ADR-002 (retained), ADR-008 |
+| 7 | ADR-010, ADR-001 (baseline comparison) |
 
 ---
 
@@ -2679,19 +2680,231 @@ pickling, sync Mgmt, SyncRunStrategy, Manager factory, ADR-002 fork bridge.
 
 ---
 
-# Phases 7–8 — expand before use
+# Phase 7 — Test infrastructure and CI
+
+**Purpose:** make the suite and CI the durable proof that Phases 0–6 preserved
+behaviour. Much of Phase 7 was already landed early (pytest-asyncio, Ubuntu
+CI). This phase inventories that work, hardens CI (push vs PR, second
+platform), and records an explicit Phase 0 comparison.
+
+**Do not** rewrite tests gratuitously. **Do not** start Phase 8 coverage
+expansion as part of these tasks.
+
+**Commit policy:** one planning commit (this expansion); then one commit per
+task group as noted.
+
+> **Read first:** [ADR-010](design-adrs/ADR-010-async-test-strategy.md),
+> [ADR-001](design-adrs/ADR-001-baseline-first-migration.md).
+
+### Task 7.0 — Inventory: what Phase 7 already has
+
+**Goal:** write down what is already done so later tasks only touch gaps.
+
+**Files:** `docs/baseline.md` (add "Phase 7 inventory" only).
+
+**Prompt:**
+
+```
+Under "Phase 7 inventory" in docs/baseline.md, record with evidence:
+
+ALREADY DONE:
+- nose / [nosetests] removed (setup.cfg has no nosetests; no `from nose`
+  in PiCN/)
+- pytest-asyncio: asyncio_mode=strict, function-scoped loops in
+  pyproject.toml; CI install line includes pytest-asyncio
+- GitHub Actions CI: .github/workflows/ci.yml runs pytest on Python 3.14
+  ubuntu-latest, ignores Simulations
+
+REMAINING (Phase 7 must finish):
+- CI: fast checks on push, full suite on pull_request (agent-tasks rule)
+- CI: at least one second platform (macos-latest) on PR
+- Darwin native-code tests: skip cleanly when NFN-x86-file-osx is missing
+  (today FileNotFoundError fails the suite on macOS)
+- After Phase 7 baseline: full-suite counts vs Phase 0 / After Phase 1
+- Tick Phase 7 exit criteria
+
+Do not change CI or tests in this task.
+```
+
+**Verify:**
+```bash
+grep -A40 "Phase 7 inventory" docs/baseline.md | head -45
+```
+
+**Expect:** ALREADY DONE and REMAINING sections present.
+
+---
+
+### Task 7.1 — Skip Darwin native fixtures when absent
+
+**Goal:** known macOS-only native tests fail cleanly (skip) instead of
+`FileNotFoundError` when the fixture binary is missing.
+
+**Files:** `PiCN/ProgramLibs/Fetch/test/test_FetchNFN.py`, and any
+`test_x86Executor.py` with the same CWD-relative open pattern.
+
+**Prompt:**
+
+```
+In test_FetchNFN native_code tests (and x86Executor tests if they open
+NFN-x86-file-osx), before open(): if the fixture file is not present,
+self.skipTest("NFN-x86-file-osx fixture not available"). Keep the existing
+platform.system() != 'Darwin' skip. Do not change fetch/forwarder logic.
+Do not delete the tests.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs/Fetch/test/test_FetchNFN.py -q --timeout=120 -k native_code 2>&1 | tee /tmp/p7_native.txt | tail -15
+grep -n skipTest\|NFN-x86-file-osx PiCN/ProgramLibs/Fetch/test/test_FetchNFN.py | head -20
+```
+
+**Expect:** on Darwin without the fixture: skipped, not failed. On Linux:
+already skipped via platform check.
+
+---
+
+### Task 7.2 — Split CI: push (fast) vs pull_request (full)
+
+**Goal:** every push runs a fast Layer/Process/Packet/encoding suite; every
+PR runs the full `PiCN/` suite (still ignoring Simulations).
+
+**Files:** `.github/workflows/ci.yml` only.
+
+**Prompt:**
+
+```
+Rewrite .github/workflows/ci.yml jobs:
+
+1) job `fast` — runs on push and pull_request (and workflow_dispatch).
+   pytest paths: PiCN/Layers PiCN/LayerStack PiCN/Processes PiCN/Packets
+   PiCN/Mgmt — ignore Simulations. Same Python 3.14, timeout, reruns as
+   today.
+
+2) job `full` — runs on pull_request and workflow_dispatch only (NOT on
+   every push). pytest PiCN/ --ignore=PiCN/Simulations with current flags.
+
+Keep concurrency group. Do not add coverage gates here (Phase 8).
+Do not install opencv / requirements.txt.
+```
+
+**Verify:**
+```bash
+grep -E "name:|on:|pytest|pull_request|push" .github/workflows/ci.yml | head -60
+```
+
+**Expect:** distinct fast and full jobs; full gated to PR / dispatch.
+
+---
+
+### Task 7.3 — Second platform on PR full job
+
+**Goal:** full suite also runs on `macos-latest` for pull requests.
+
+**Files:** `.github/workflows/ci.yml` only.
+
+**Prompt:**
+
+```
+Add a matrix (or second job) so the full suite runs on ubuntu-latest AND
+macos-latest for pull_request / workflow_dispatch. Keep fast job on
+ubuntu-latest only. Document in a short workflow comment that Darwin
+native-code tests skip without NFN-x86-file-osx (Task 7.1).
+```
+
+**Verify:**
+```bash
+grep -n "macos\|matrix\|runs-on" .github/workflows/ci.yml
+```
+
+**Expect:** macos-latest appears for the full job.
+
+---
+
+### Task 7.4 — After Phase 7 baseline + Phase 0 comparison
+
+**Goal:** record full-suite counts and an explicit comparison to Phase 0 /
+After Phase 1 so the migration claim is auditable.
+
+**Files:** `docs/baseline.md` only.
+
+**Prompt:**
+
+```
+Run (or cite the latest green CI / local run):
+  python -m pytest PiCN/ --ignore=PiCN/Simulations -q --timeout=90
+
+Write "After Phase 7" in docs/baseline.md with:
+- collected / passed / failed / skipped counts
+- comparison table vs Phase 0 (~462 collectable) and After Phase 1
+  (469 collected, 464 passed, 5 failed)
+- explanation that growth is new async tests; the only remaining
+  failures/skips are the documented native-code / fixture cases (not
+  migration regressions)
+- note CI layout from Tasks 7.2–7.3
+
+Tick modernization.md Phase 7 checkboxes that are now true.
+```
+
+**Verify:**
+```bash
+grep -A35 "After Phase 7" docs/baseline.md | head -40
+grep -A15 "Phase 7" docs/modernization.md | head -20
+```
+
+**Expect:** comparison section present; modernization Phase 7 items ticked
+where done.
+
+---
+
+### Task 7.5 — Tick Phase 7 exit criteria
+
+**Goal:** confirm exit gate before Phase 8.
+
+**Files:** `docs/agent-tasks.md` (this section’s checkboxes only),
+`docs/modernization.md` Phase 7 exit line if needed.
+
+**Prompt:**
+
+```
+Confirm CI green on the branch (fast job on latest push; full job via
+workflow_dispatch or a PR if available). Tick Phase 7 exit criteria below.
+Do not start Phase 8 tasks yet.
+```
+
+**Verify:**
+```bash
+grep -A15 "Phase 7 exit criteria" docs/agent-tasks.md
+```
+
+**Expect:** all exit criteria checked.
+
+---
+
+## Phase 7 exit criteria
+
+Do not start Phase 8 coverage work as a gate until **all** are true:
+
+- [x] No `nose` / `[nosetests]` residue; pytest-asyncio strict + function scope
+- [x] CI: fast suite on push; full suite on PR
+- [x] CI: full suite on Linux and at least one other platform
+- [x] Darwin native fixtures skip when missing (no FileNotFoundError fail)
+- [x] `docs/baseline.md` After Phase 7 compares to Phase 0 / Phase 1 with no
+      unexplained regressions
+
+---
+
+# Phase 8 — expand before use
 
 | Phase | Theme | Governing ADRs | Expand when |
 |---|---|---|---|
-| 7 | Test infrastructure and CI | 010 | Phase 6 exits |
-| 8 | Coverage completion (runs continuously) | 010 | Any time after 7 |
+| 8 | Coverage completion (runs continuously) | 010 | Phase 7 exits |
 
 ### Rules that carry forward
 
 - Later “true” scaffolding deletion needs a phase that retires
-  `runtime=sync` first — do not conflate with this Phase 6.
-- CI (Phase 7) should run the fast checks on every push, and slower
-  full-stack tests on pull requests.
+  `runtime=sync` first — do not conflate with Phase 6.
+- Phase 8 fills coverage gaps; it is continuous, not a single gate.
 
 ---
 

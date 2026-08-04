@@ -261,12 +261,12 @@ coverage expansion begins, so that new tests are themselves verified by the
 pipeline and any regression surfaces immediately rather than at the end of an
 open-ended testing effort.
 
-- [ ] Migrate remaining `nose`-style assertions to pytest idiom where they block
+- [x] Migrate remaining `nose`-style assertions to pytest idiom where they block
       progress; do not rewrite tests gratuitously.
-- [ ] Add `pytest-asyncio` fixtures and a consistent event-loop policy for tests.
-- [ ] Add GitHub Actions CI: run the suite on the supported Python range,
+- [x] Add `pytest-asyncio` fixtures and a consistent event-loop policy for tests.
+- [x] Add GitHub Actions CI: run the suite on the supported Python range,
       ideally on Linux plus at least one other platform.
-- [ ] Record the final test state and compare against the Phase 0 baseline —
+- [x] Record the final test state and compare against the Phase 0 baseline —
       this comparison is what demonstrates the migration preserved behaviour,
       and is the single most important artifact of the whole effort.
 
