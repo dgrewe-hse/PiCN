@@ -166,8 +166,31 @@ class AsyncLayerProcess(abc.ABC):
         task = self._task
         task.cancel()
         try:
-            await asyncio.wait_for(task, timeout=timeout)
-        except (asyncio.CancelledError, TimeoutError):
-            pass
+            # Deliberately asyncio.wait([task], timeout=...), NOT
+            # asyncio.wait_for(task, timeout=...): wait_for cancels the
+            # CALLING coroutine's own wait on timeout, which only cancels
+            # `task` a second time as a side effect of that -- if `task`
+            # ignores cancellation (swallows it without re-raising, ADR-006
+            # rule #2), wait_for keeps waiting for it to actually finish
+            # regardless, hanging well past its nominal timeout.
+            # asyncio.wait() returns at the deadline no matter what `task`
+            # does internally, which is what "bounded" has to mean for this
+            # to be a real safety net against exactly that failure mode.
+            done, pending = await asyncio.wait([task], timeout=timeout)
+            if pending:
+                self.logger.warning(
+                    "%s did not stop within %.1fs of being cancelled -- it may "
+                    "be swallowing asyncio.CancelledError without re-raising "
+                    "it (see ADR-006, rule #2).",
+                    self.logger.name, timeout,
+                )
+            elif not task.cancelled():
+                # Finished some other way (an exception, or -- degenerately --
+                # a normal return). Surface it rather than losing it; a
+                # caller explicitly awaiting stop() should see a crash that
+                # already happened, not a silent no-op.
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
         finally:
             self._task = None

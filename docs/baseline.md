@@ -215,3 +215,82 @@ and `docs/design-adrs/ADR-010-async-test-strategy.md` were both corrected to
 match (the latter also gained an "Addendum" documenting that
 `@pytest.mark.asyncio` silently no-ops on `unittest.TestCase` methods — caught
 the same way, before it could produce a false-positive test file).
+
+## Phase 2 coverage gap-closing (2026-08-04)
+
+A coverage pass after the initial Phase 2 landing found 91% line coverage on
+the two new production files, but several ADR-mandated behaviours had no test
+at all. Closing them surfaced a genuine bug, not just missing assertions:
+
+**`stop()`/`stop_all()` did not actually bound total wait time against the
+exact failure mode they exist to protect against.** Both were built on
+`asyncio.wait_for(task, timeout=...)` (matching ADR-006's own reference
+snippet). `wait_for` cancels the *calling* coroutine's wait on timeout; if the
+awaited task itself ignores that cancellation (swallows `CancelledError`
+without re-raising — precisely the ADR-006 rule #2 violation this timeout is
+meant to guard against), `wait_for` keeps waiting for the task to actually
+finish regardless, hanging well past its nominal timeout. Verified directly
+with a deliberately non-compliant test layer: the old implementation hung
+indefinitely; a fix using `asyncio.wait([task], timeout=...)` instead (which
+returns at the deadline no matter what the task does internally) returned in
+0.20s as expected. Both `AsyncLayerProcess.stop()` and
+`AsyncLayerStack.stop_all()` were fixed, and both now log a warning naming the
+stuck task on timeout (previously a bare `pass`, contradicting ADR-006's own
+stated goal of a detectable — not silent — timeout). See ADR-006's Addendum.
+
+**A second, related discovery while writing the test for the fix above:**
+`asyncio.run()`'s own event-loop teardown does not bound its wait for
+remaining tasks either. A test that left the deliberately-stuck layer's task
+alive past the end of the test body hung the *entire* run, not just that one
+test — concrete evidence for why ADR-010 rule #4 ("a test that leaves a stack
+running has failed") is a hard requirement, not a style preference.
+
+**A third, unrelated discovery:** `PiCN.Logger.Logger` constructs a
+`logging.Logger` directly rather than via `logging.getLogger()`, so it is
+never registered in the standard logger hierarchy — its `.parent` is never
+set, and nothing logged through it propagates to the root logger at any
+level. `pytest`'s `caplog` fixture attaches to the root logger, so it silently
+sees nothing from any `PiCN.Logger.Logger` instance, ever, regardless of
+`caplog.at_level(...)`. Worked around in tests by attaching a small
+list-collecting `logging.Handler` directly to the logger instance under test.
+This is a pre-existing property of `Logger`, out of scope to fix here, but
+worth knowing before anyone else reaches for `caplog` against this codebase.
+
+**9 new tests added** (5 in `test_AsyncLayerProcess.py`, 4 in
+`test_AsyncLayerStack.py`), closing every gap identified: `stop()`/`stop_all()`
+genuinely respecting their timeout and logging on expiry, `run()` servicing
+both queue directions concurrently (not serially), a layer that already
+crashed having its exception surfaced by `stop()`, `insert()` after
+`start_all()` raising `RuntimeError`, `stack.exception` staying `None` through
+an ordinary shutdown, and a failing layer's exception being logged with its
+traceback (`exc_info=`), not `str(exception)`.
+
+**Plus a behavioral-parity test** (`PiCN/LayerStack/test/test_stack_parity.py`,
+2 tests): the same 3-layer echo-stack scenario built once on the old
+`LayerProcess`/`LayerStack` (multiprocessing) and once on the new
+`AsyncLayerProcess`/`AsyncLayerStack` (asyncio), with identical layer logic
+and identical input, asserting identical output. This does not wire the two
+execution models together — their queue types are not interchangeable, and
+the migration plan does not need them to be, since each `ProgramLib` switches
+its whole stack at once in Phase 4/5, never layer-by-layer within one running
+stack — but it gives direct test evidence for Phase 2's claim that the new
+foundation is behaviourally equivalent to the old one, which Phase 4 will
+rely on when real layers move over.
+
+Coverage after: `AsyncLayerProcess.py` 98% (2 lines uncovered: a defensive
+early-return for a layer with no queues wired at all, and an internal
+edge-case branch in `run()`'s cleanup — both degenerate paths no compliant
+usage should ever hit). `AsyncLayerStack.py` 88% (uncovered: the four
+`queue_to_*`/`queue_from_*` property setters for reassigning a *stack's*
+outer queues after construction, which no production code exercises today —
+`test_LayerStack.py` doesn't test its sync equivalent either — plus one
+degenerate `_on_layer_done` branch matching the two above).
+
+Full suite: 27/27 new + existing Phase 2 tests pass;
+
+```
+500 collected, 496 passed, 4 failed, in 635s (0:10:35)
+```
+
+unchanged from the "After Phase 2" result above (491 -> 500, +9 new tests;
+same 4 known native-code failures; no regressions).

@@ -150,13 +150,19 @@ class AsyncLayerStack(object):
             return
         for task in self._tasks:
             task.cancel()
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*self._tasks, return_exceptions=True),
-                timeout=timeout,
+        # asyncio.wait(), NOT asyncio.wait_for(gather(...)): see the detailed
+        # comment in AsyncLayerProcess.stop() -- wait_for only cancels the
+        # CALLING coroutine on timeout, and gather()/wait_for() then keep
+        # waiting for the real tasks to actually finish regardless, which
+        # hangs indefinitely if any of them ignores cancellation. asyncio.wait()
+        # returns at the deadline no matter what the tasks do internally.
+        done, pending = await asyncio.wait(self._tasks, timeout=timeout)
+        if pending:
+            stuck = [t.get_name() for t in pending]
+            self.logger.warning(
+                "stop_all() timed out after %.1fs; %d layer task(s) did not "
+                "stop: %s", timeout, len(stuck), stuck,
             )
-        except TimeoutError:
-            pass
 
     # NOTE: LayerStack's equivalent setters below assign via "self.queue_to_higher
     # = queue" inside the queue_to_higher setter itself -- a pre-existing infinite

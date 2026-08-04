@@ -109,3 +109,49 @@ grep -rn -A3 "except asyncio.CancelledError" PiCN/ --include=*.py | grep -v test
 ```
 
 Inspect each: every block must contain `raise`.
+
+## Addendum (2026-08-04): the timeout branch must log, not just `pass`
+
+Found while writing the test for `stop()`'s timeout path (Task 2.2 originally
+shipped with no test exercising it at all): the reference snippet above lists
+"failure to stop is detectable rather than silent" as a reason for choosing
+Option B, but the snippet itself is `except (asyncio.CancelledError,
+TimeoutError): pass` — a timeout is exactly as silent as the `CancelledError`
+case it's grouped with. A caller awaiting `stop()` cannot distinguish a clean
+stop from a timeout without separately polling the task.
+
+**Rule, refining #1 above:** split the two cases. `CancelledError` (the
+expected outcome) still passes silently. `TimeoutError` must log a warning
+naming the layer and the timeout used, before returning — still without
+raising, since `stop()`'s contract (never raise during teardown) is unchanged.
+This is a logging addition only; it does not change `stop()`'s return value or
+exception behaviour, so nothing that already calls `stop()` needs to change.
+
+```python
+try:
+    await asyncio.wait_for(task, timeout=timeout)
+except asyncio.CancelledError:
+    pass
+except TimeoutError:
+    self.logger.warning(
+        "%s did not stop within %.1fs of being cancelled -- it may be "
+        "swallowing asyncio.CancelledError without re-raising it (rule #2).",
+        self.logger.name, timeout,
+    )
+```
+
+`AsyncLayerStack.stop_all()` follows the same split, logging which layer
+task(s) specifically failed to stop.
+
+**Added verification** — proving this path fires at all requires a
+deliberately non-compliant test layer (one that swallows its first
+cancellation), since no compliant layer should ever hit it:
+
+```bash
+python -m pytest PiCN/Processes/test/test_AsyncLayerProcess.py -k timeout -v
+```
+
+Expect a passing test that starts a stubborn layer, calls `stop()` with a
+short timeout, and asserts the task is genuinely still running afterward
+(proving the timeout — not a clean stop — occurred), then cleans it up with a
+second, unhandled cancellation.

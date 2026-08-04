@@ -9,11 +9,28 @@ use plain pytest functions too, for consistency within this file.
 """
 
 import asyncio
+import logging
 
 import pytest
 
 from PiCN.LayerStack.AsyncLayerStack import AsyncLayerStack, DEFAULT_QUEUE_SIZE
 from PiCN.Processes.AsyncLayerProcess import AsyncLayerProcess
+
+
+class ListHandler(logging.Handler):
+    """Collects emitted LogRecords in a list. Used instead of pytest's caplog
+    fixture: PiCN.Logger.Logger constructs a logging.Logger directly rather
+    than via logging.getLogger(), so it is never registered in the standard
+    logger hierarchy and nothing logged through it ever reaches caplog's
+    root-attached handler, at any level. See the identical note in
+    test_AsyncLayerProcess.py, where this was first discovered."""
+
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
 class DummyAsyncLayer(AsyncLayerProcess):
@@ -53,6 +70,34 @@ class FailingAsyncLayer(AsyncLayerProcess):
 
     async def data_from_higher(self, to_lower, to_higher, data) -> None:
         await to_lower.put(data)
+
+
+class StubbornAsyncLayer(AsyncLayerProcess):
+    """A layer that swallows cancellation indefinitely instead of re-raising
+    it (deliberately violating ADR-006 rule #2). Used exclusively to prove
+    stop_all()'s timeout path genuinely fires and is bounded -- see the
+    identical, more thoroughly commented layer of the same name and purpose
+    in test_AsyncLayerProcess.py."""
+
+    def __init__(self):
+        super().__init__(log_level=logging.WARNING)  # 255 ("off") would hide the warning under test
+        self.entered = asyncio.Event()
+        self.swallow_cancellation = True
+
+    async def data_from_lower(self, to_lower, to_higher, data) -> None:
+        pass
+
+    async def data_from_higher(self, to_lower, to_higher, data) -> None:
+        pass
+
+    async def run(self) -> None:
+        while True:
+            self.entered.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                if not self.swallow_cancellation:
+                    raise
 
 
 def test_create_empty():
@@ -259,3 +304,106 @@ async def test_layer_failure_cancels_siblings_and_surfaces():
 async def test_stop_all_before_start_all_is_a_noop():
     lstack = AsyncLayerStack([DummyAsyncLayer()])
     await lstack.stop_all()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_insert_after_start_all_raises_runtime_error():
+    """insert() must refuse to mutate a stack whose tasks are already
+    running -- mirrors LayerStack's ProcessError case (ADR-004 area), even
+    though only the TypeError/ValueError paths are an ADR-mandated match.
+
+    NOTE: must be async -- start_all() calls asyncio.create_task(), which
+    requires a running event loop.
+    """
+    toplayer = DummyAsyncLayer()
+    lstack = AsyncLayerStack([toplayer])
+    lstack.start_all()
+    try:
+        with pytest.raises(RuntimeError):
+            lstack.insert(DummyAsyncLayer(), on_top_of=toplayer)
+    finally:
+        await lstack.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_normal_shutdown_does_not_record_a_failure():
+    """ADR-007 rule #3 in effect: cancellation during ordinary stop_all() is
+    NOT a failure. _on_layer_done's early return for task.cancelled() fires
+    for every layer here, and none of it may end up on stack.exception."""
+    lstack = AsyncLayerStack([DummyAsyncLayer(), DummyAsyncLayer()])
+    lstack.start_all()
+    await lstack.stop_all()
+    assert lstack.exception is None
+    for task in lstack._tasks:
+        assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_layer_failure_is_logged_with_traceback_not_stringified():
+    """ADR-007 rule #4: a failing layer's exception must be logged with its
+    traceback (exc_info=...), not just str(exception) -- a regression here
+    would silently make production failures undebuggable."""
+    toplayer = DummyAsyncLayer()
+    failinglayer = FailingAsyncLayer(trigger="boom")
+    lstack = AsyncLayerStack([toplayer, failinglayer])
+    lstack.logger.setLevel(logging.ERROR)  # AsyncLayerStack's own logger defaults to 255 ("off")
+    handler = ListHandler()
+    lstack.logger.addHandler(handler)
+
+    lstack.start_all()
+    try:
+        await lstack.queue_from_lower.put("boom")
+
+        async def _wait_for_failure():
+            while lstack.exception is None:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_wait_for_failure(), timeout=1)
+    finally:
+        await lstack.stop_all()
+
+    records_with_traceback = [r for r in handler.records if r.exc_info is not None]
+    assert records_with_traceback, (
+        "expected a log record with exc_info set (ADR-007 rule #4); "
+        f"captured records: {[r.getMessage() for r in handler.records]!r}"
+    )
+    assert records_with_traceback[0].exc_info[1] is lstack.exception
+
+
+@pytest.mark.asyncio
+async def test_stop_all_respects_timeout_for_a_stuck_layer():
+    """ADR-006 addendum: stop_all() must genuinely return at its deadline
+    even if a layer ignores cancellation, and must log a warning naming the
+    stuck task rather than silently pretending everything stopped."""
+    healthylayer = DummyAsyncLayer()
+    stuck = StubbornAsyncLayer()
+    lstack = AsyncLayerStack([healthylayer, stuck])
+    lstack.logger.setLevel(logging.WARNING)  # AsyncLayerStack's own logger defaults to 255 ("off")
+    handler = ListHandler()
+    lstack.logger.addHandler(handler)
+
+    lstack.start_all()
+    await asyncio.wait_for(stuck.entered.wait(), timeout=1)
+    stuck_task = lstack._tasks[lstack.layers.index(stuck)]
+
+    try:
+        start = asyncio.get_running_loop().time()
+        await lstack.stop_all(timeout=0.1)
+        elapsed = asyncio.get_running_loop().time() - start
+        assert elapsed < 1.0, "stop_all() did not respect its timeout"
+
+        assert not stuck_task.done(), "the stuck layer's task should still be running"
+        messages = [r.getMessage() for r in handler.records]
+        assert any("timed out" in m for m in messages), messages
+    finally:
+        # Cleanup so no task leaks past the end of the test (ADR-010 rule
+        # #4). This must run even if an assertion above failed: asyncio's own
+        # loop-teardown task cleanup does not bound its wait for a task that
+        # ignores cancellation either (observed directly while writing this
+        # test -- a leaked, immortal task here hung the whole run, not just
+        # this test). Deliberately asyncio.wait(), NOT asyncio.wait_for(): the
+        # latter has the exact bug documented in AsyncLayerProcess.stop() --
+        # it was hit HERE too, in this cleanup code, before being fixed.
+        stuck.swallow_cancellation = False
+        stuck_task.cancel()
+        await asyncio.wait([stuck_task], timeout=1)
