@@ -94,6 +94,10 @@ class AsyncBasicNFNLayer(AsyncLayerProcess):
     def optimizer(self):
         return self._core.optimizer
 
+    @optimizer.setter
+    def optimizer(self, value):
+        self._core.optimizer = value
+
     async def _apply_outbound(self, out: Outbound, to_lower, to_higher) -> None:
         if out.direction == "lower":
             await to_lower.put(out.item)

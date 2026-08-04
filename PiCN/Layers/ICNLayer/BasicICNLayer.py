@@ -115,6 +115,10 @@ class BasicICNLayer(LayerProcess):
         try:
             for out in self._core.ageing():
                 self._apply_outbound(out, self.queue_to_lower, self.queue_to_higher)
+        except Exception as e:
+            # Matches pre-extract behaviour: Timer may fire after queues close.
+            self.logger.warning("Exception during ageing: " + str(e))
+            pass
         finally:
             t = threading.Timer(self._ageing_interval, self.ageing)
             t.daemon = True
