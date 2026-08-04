@@ -496,3 +496,41 @@ Files importing `LayerProcess` and/or `multiprocessing`:
 | `DataOffloadingChunklayer` | `NFNForwarderData` (sync); `test_UploadChunkLayer` |
 | `DataOffloadingChunklayerSimple` | `test_UploadChunkLayerSimple` only |
 | `NFNForwarderData` | `Simulations/DataOffloading/*`, `MobilitySimulations/MobilitySimulation.py` |
+
+## After Phase 6 (Tasks 6.0–6.6)
+
+Narrowed cleanup with **dual runtime retained** (sync default unchanged).
+
+### Choices made
+
+| Item | Outcome |
+|---|---|
+| `LegacySyncInterfaceAdapter` | **Deleted** (no production callers) |
+| `NFNForwarderData` + DataOffloading chunk layers | **Deleted**; MobilitySimulation uses `NFNForwarder` only |
+| `PiCN/Playground` | **Deleted** (experimental MP demos) |
+| Sync `Basic*Layer` / `LayerProcess` / Manager | **Kept** |
+| `SimulationBus` MP | **Kept** (documented exception) |
+
+### Allowed `multiprocessing` / sync-path exceptions
+
+| Area | Notes |
+|---|---|
+| Sync ProgramLibs + `LayerProcess` / `LayerStack` | Default `runtime=sync` |
+| Sync `Mgmt` process | Until sync runtime retired |
+| `PiCNSyncDataStructFactory` / Manager | Sync tables; async uses plain objects |
+| `configure_start_method` (ADR-002) | Sync fork bridge |
+| `SimulationBus` + `SimulationInterface` queues | Async nodes + sync bus |
+| `AsyncLayerStack` `ThreadPoolExecutor` | Not MP; ADR-009 |
+| `SyncRunStrategy` / `AsyncRunStrategy` | Sync BasicLinkLayer + Phase 3 tests |
+
+### Greps (do **not** expect empty MP imports)
+
+```
+rg -n 'LegacySyncInterfaceAdapter|NFNForwarderData|DataOffloadingChunk' PiCN/ --glob '*.py'
+# empty
+
+test ! -d PiCN/Playground
+```
+
+Full scaffolding deletion (`_run_*`, pickling, sync Mgmt, …) remains
+**deferred** — see ADR-004 Phase 6 addendum.

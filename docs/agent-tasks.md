@@ -2666,13 +2666,13 @@ grep -A20 "Phase 6 exit criteria" docs/agent-tasks.md
 
 Do not start Phase 7 until **all** are true:
 
-- [ ] Dead production helpers from inventory deleted (or inventory said none)
-- [ ] Playground ported or removed (no leftover MP LayerProcess demos)
-- [ ] DataOffloading / NFNForwarderData async resolved (port or delete)
-- [ ] Sync ProgramLibs and Basic* wrappers still work (default sync unchanged
+- [x] Dead production helpers from inventory deleted (or inventory said none)
+- [x] Playground ported or removed (no leftover MP LayerProcess demos)
+- [x] DataOffloading / NFNForwarderData async resolved (port or delete)
+- [x] Sync ProgramLibs and Basic* wrappers still work (default sync unchanged
       unless a later phase flips it)
-- [ ] `docs/baseline.md` lists MP grep exceptions; SimulationBus excepted
-- [ ] `architecture.md` + `project_structure.md` describe dual runtime
+- [x] `docs/baseline.md` lists MP grep exceptions; SimulationBus excepted
+- [x] `architecture.md` + `project_structure.md` describe dual runtime
 
 **Explicitly deferred (not Phase 6):** delete `_run_*`, `in_unittest`,
 pickling, sync Mgmt, SyncRunStrategy, Manager factory, ADR-002 fork bridge.

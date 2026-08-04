@@ -241,12 +241,12 @@ Locked decisions (2026-08-04):
 5. Update `docs/architecture.md` and `docs/project_structure.md` as an
    exit criterion.
 
-- [ ] Inventory and ADR addendum: narrowed Phase 6 vs original modernization.md
-- [ ] Delete production-dead helpers (e.g. unused adapters) verified by grep
-- [ ] Port or delete DataOffloading + enable `NFNForwarderData` async
-- [ ] Port or delete `Playground/` MP layers
-- [ ] Document MP grep exceptions (sync ProgramLibs, SimulationBus, …)
-- [ ] Update architecture / project_structure docs for dual runtime
+- [x] Inventory and ADR addendum: narrowed Phase 6 vs original modernization.md
+- [x] Delete production-dead helpers (e.g. unused adapters) verified by grep
+- [x] Port or delete DataOffloading + enable `NFNForwarderData` async
+- [x] Port or delete `Playground/` MP layers
+- [x] Document MP grep exceptions (sync ProgramLibs, SimulationBus, …)
+- [x] Update architecture / project_structure docs for dual runtime
 
 **Exit criteria:** dead code gone; Playground and DataOffloading resolved;
 docs describe sync+async; greps match the documented exception list (not
