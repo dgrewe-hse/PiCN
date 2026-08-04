@@ -5,8 +5,6 @@ import asyncio
 import logging
 
 import PiCN.ProgramLibs.ICNForwarder
-from PiCN.Executable.Helpers.ConfigParser import ConfigParser
-from PiCN.Executable.Helpers.ConfigParser.ConfigParser import CouldNotOpenConfigError, CouldNotParseError, MalformedConfigurationError
 from PiCN.Executable.Helpers.async_runtime import run_until_signal
 from PiCN.Logger import Logger
 from PiCN.Layers.PacketEncodingLayer.Encoder import SimpleStringEncoder, NdnTlvEncoder
@@ -21,9 +19,13 @@ def main(args):
     logger = Logger("ICNForwarder", logging.DEBUG) # note: set later according to cli/config arguments
     logger.info("Starting a CCN Forwarder...")
 
-    # Parse Configuration file
+    # Parse Configuration file (pytoml required only when -c/--config is used)
     conf = None
     if args.config != "none":
+        from PiCN.Executable.Helpers.ConfigParser import ConfigParser
+        from PiCN.Executable.Helpers.ConfigParser.ConfigParser import (
+            CouldNotOpenConfigError, CouldNotParseError, MalformedConfigurationError)
+
         try:
             conf = ConfigParser(args.config)
             logger.info("Successfully parsed configuration file.")

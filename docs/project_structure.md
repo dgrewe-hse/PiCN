@@ -1,13 +1,19 @@
 # Package Structure
 
-Package Structure of PiCN.
+Package layout of PiCN on branch `modernization/asyncio-python314`.
 
-### PiCN
+### Top level
 
-* **`Executable`**: *Starter scripts for network nodes and tools*
-  * `Fetch`, `ICNDataRepository`, `ICNForwarder`, `Mgmt`, `NFNForwarder`, …
+* **`starter/`**: shell wrappers (`picn-relay`, `picn-nfn`, `picn-repo`, `picn-fetch`, `picn-mgmt`, …) that set `PYTHONPATH` and invoke `PiCN/Executable/`
+* **`docs/`**: architecture, modernization plan, ADRs, baseline
+* **`PiCN/`**: library and program packages (below)
+
+### `PiCN/`
+
+* **`Executable`**: CLI entry points wrapping ProgramLibs
   * `--runtime sync|async` on relay / NFN / fetch (default sync)
   * `Helpers/async_runtime.py`: SIGINT-aware `run_until_signal` for async mains
+  * Optional TOML config for the relay: `pip install "PiCN[config]"` (`pytoml`), used only with `-c/--config`
 * **`Layers`**: *One package per layer; each migrated layer has*
   * `Basic*Layer` — sync `LayerProcess` wrapper (default ProgramLib path)
   * `*Core` — process-free handlers returning `Outbound` lists

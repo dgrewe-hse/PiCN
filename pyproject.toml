@@ -32,6 +32,8 @@ classifiers = [
 [project.optional-dependencies]
 opencv = ["opencv-python>=4.2"]
 dev = ["pytest", "pytest-timeout", "pytest-rerunfailures", "pytest-asyncio"]
+# Needed only when using picn-relay -c/--config (TOML config files)
+config = ["pytoml"]
 
 [project.scripts]
 # No console scripts — entry points live in starter/ and ProgramLibs/
