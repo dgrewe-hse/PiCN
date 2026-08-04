@@ -39,6 +39,14 @@ class AsyncBasicRepositoryLayer(AsyncLayerProcess):
     def executor(self) -> Optional[Executor]:
         return self._executor
 
+    @executor.setter
+    def executor(self, value: Optional[Executor]) -> None:
+        self._executor = value
+
+    def set_executor(self, executor: Executor) -> None:
+        """Injected by AsyncLayerStack.start_all() (ADR-009)."""
+        self._executor = executor
+
     async def _apply_outbound(self, out: Outbound, to_lower, to_higher) -> None:
         if out.direction == "lower":
             await to_lower.put(out.item)
