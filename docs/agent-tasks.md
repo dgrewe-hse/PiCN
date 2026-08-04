@@ -1227,10 +1227,18 @@ including a *new* pass, is a bug in the extraction, not a bonus.
 
 ### Task 3.2 — `UDP4Interface`: add the async contract alongside the sync one
 
-**Goal:** `UDP4Interface` gains `register()`/`async send()` per ADR-008,
+**Goal:** `UDP4Interface` gains `register()`/`send_async()` per ADR-008,
 without removing or changing `send()`/`receive()`/`file_descriptor` — both
 surfaces coexist on the same class (ADR-008 addendum: no parallel class).
 Not wired into `BasicLinkLayer` yet; tested standalone.
+
+> **Naming correction (found during implementation):** ADR-008's own text
+> calls the new method `async def send(...)`, reusing `send()`'s name. That
+> cannot actually work: Python dispatches on name alone, so a second `send`
+> definition on the same class simply shadows the first, silently breaking
+> every synchronous caller (`SyncRunStrategy`) rather than raising. The
+> implementation (and every reference below) uses `send_async` instead —
+> named distinctly, exactly as `register()` already is.
 
 **Files:** `PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py`, creates
 `PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface_async.py`.
@@ -1261,7 +1269,8 @@ In UDP4Interface.py, ADD (do not remove or modify any existing method):
      exception to ADR-005 rule 4, not a mistake -- say so in a comment).
    - Store the transport for send() and close() to use.
 
-2. async def send(self, data, addr) -> None:
+2. async def send_async(self, data, addr) -> None:
+   - Named distinctly from send() -- see the naming correction above.
    - Wraps self._transport.sendto(data, addr). Must only be usable after
      register() has been called; raise a clear RuntimeError otherwise (do
      not silently no-op).
@@ -1437,7 +1446,8 @@ class LegacySyncInterfaceAdapter(BaseInterface):
         # callback -- do not use put_nowait here, there is no callback
         # constraint forcing that exception in this file.
 
-    async def send(self, data, addr) -> None:
+    async def send_async(self, data, addr) -> None:
+        # Named distinctly from send() -- see Task 3.2's naming correction.
         # await loop.run_in_executor(self._executor, self._wrapped.send, data, addr)
 
     @property
@@ -1470,7 +1480,7 @@ python -m pytest PiCN/Layers/LinkLayer/Interfaces/test/test_LegacySyncInterfaceA
 
 **Goal:** per ADR-008 rule 7 ("port one interface at a time... UDP4Interface
 first, then the simulation interface"), `SimulationInterface` gains the same
-`register()`/`async send()` surface UDP4Interface got in Task 3.2, reusing
+`register()`/`send_async()` surface UDP4Interface got in Task 3.2, reusing
 the same executor-bridge pattern for its already-multiprocessing-based
 `queue_from_bus`. `SimulationBus` itself is unchanged — it still dispatches
 via its own `multiprocessing.Queue`-based process; only the per-node
@@ -1504,7 +1514,8 @@ send(), receive(), file_descriptor, address(), close()):
      this shape; reuse that logic rather than re-deriving it.
    - Store the bridge task so it can be cancelled on close/teardown.
 
-2. async def send(self, data, addr) -> None:
+2. async def send_async(self, data, addr) -> None:
+   - Named distinctly from send() -- see Task 3.2's naming correction.
    - Wraps self.queue_from_linklayer.put([addr, data]) -- the existing
      send(..., src="relay") body. multiprocessing.Queue.put() on this
      already-unbounded queue does not block in practice, but dispatch it
@@ -1518,7 +1529,7 @@ pytest, not unittest.TestCase) covering:
 - register() + a manual queue_from_bus.put(...) (simulating what SimulationBus
   would do): the item arrives on the given asyncio.Queue as
   (packet, addr, interface_id).
-- send(): the data appears on queue_from_linklayer, matching what
+- send_async(): the data appears on queue_from_linklayer, matching what
   SimulationBus's receive("bus") side expects today.
 
 Do not modify test_Simulation.py -- it characterizes the sync contract via
@@ -1547,29 +1558,57 @@ nothing outside the new files changed behaviour.
 ```
 Run each of these and record the output:
 
-  grep -rn "recvfrom\|sendto\|select\." PiCN/Layers/LinkLayer/RunStrategy.py PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py PiCN/Layers/LinkLayer/Interfaces/Simulation.py PiCN/Layers/LinkLayer/Interfaces/LegacySyncInterfaceAdapter.py
-  grep -rln "def file_descriptor" PiCN/Layers/LinkLayer/ --include=*.py
-  grep -n "file_descriptor" PiCN/Layers/LinkLayer/RunStrategy.py
-  grep -rn "put_nowait" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
-  grep -rn "ThreadPoolExecutor\|ProcessPoolExecutor" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
-  grep -rn "id(self)\|uuid" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
+  grep -n "self\.sock\." PiCN/Layers/LinkLayer/RunStrategy.py
+  grep -n "self\.sock\." PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py
+  grep -n "select\." PiCN/Layers/LinkLayer/Interfaces/Simulation.py
+  grep -n "recvfrom\|sendto\|select\." PiCN/Layers/LinkLayer/Interfaces/LegacySyncInterfaceAdapter.py
+  grep -rln "def file_descriptor" PiCN/Layers/LinkLayer/ --include='*.py'
+  grep -n "\.file_descriptor" PiCN/Layers/LinkLayer/RunStrategy.py
+  grep -rn "put_nowait" PiCN/Layers/LinkLayer/ --include='*.py' | grep -v test
+  grep -rn "ThreadPoolExecutor\|ProcessPoolExecutor" PiCN/Layers/LinkLayer/ --include='*.py' | grep -v test
+  grep -rn "id(self)\|uuid" PiCN/Layers/LinkLayer/ --include='*.py' | grep -v test
+
+NOTE: a blanket "recvfrom|sendto|select\." grep across UDP4Interface.py or
+Simulation.py as a WHOLE FILE is the wrong check and will show false
+positives -- those files still legitimately contain their ORIGINAL sync
+send()/receive()/SimulationBus._run() bodies, unchanged, for SyncRunStrategy's
+sake. Check self.sock./select. usage specifically, and confirm BY READING,
+not just grepping, that every hit falls inside a method that predates this
+phase (send(), receive(), get_port(), close(), enable_broadcast() for
+UDP4Interface; SimulationBus._run() for Simulation.py) rather than inside
+register()/send_async().
 
 Expected results, per ADR-008's addendum and ADR-009's addendum:
-- First: empty (no blocking socket calls anywhere in the new async code).
-- Second: exactly BaseInterface.py, UDP4Interface.py, Simulation.py (three
-  files define file_descriptor -- this is EXPECTED, not a violation; see the
-  ADR-008 addendum for why the "exactly one hit" language in the original
-  ADR text does not apply once SyncRunStrategy is kept alive).
-- Third: empty (the new async run strategy never touches file_descriptor).
-- Fourth: exactly one hit, inside UDP4Interface.py's datagram_received
-  callback, with a comment explaining why (the ADR-005 exception for a
-  non-coroutine callback).
-- Fifth: hits only inside RunStrategy.py (AsyncRunStrategy) -- exactly one
+- First (RunStrategy.py): empty -- it never touches a raw socket at all.
+- Second (UDP4Interface.py): hits only inside __init__/send()/receive()/
+  get_port()/close()/enable_broadcast() -- the original, unchanged sync
+  surface. None inside register()/send_async().
+- Third (Simulation.py): hits only inside SimulationBus._run() -- confirm by
+  line number that they fall after "class SimulationBus", not inside
+  SimulationInterface.
+- Fourth (LegacySyncInterfaceAdapter.py): empty -- it delegates to the
+  wrapped interface's own send()/receive() rather than touching a socket
+  directly.
+- Fifth: exactly FOUR files define file_descriptor -- BaseInterface.py (the
+  raising default), UDP4Interface.py and Simulation.py (real, unchanged
+  overrides, for SyncRunStrategy's sake), and LegacySyncInterfaceAdapter.py
+  (also raising -- nothing driven by AsyncRunStrategy, native or adapted,
+  supports this). This is EXPECTED, not a violation; see the ADR-008
+  addendum for why the "exactly one hit" language in the original ADR text
+  does not apply once SyncRunStrategy is kept alive.
+- Sixth: empty (the new async run strategy never touches file_descriptor).
+- Seventh: exactly one real hit, inside UDP4Interface.py's
+  datagram_received callback, with a comment explaining why (the ADR-005
+  exception for a non-coroutine callback) -- a second match that is only a
+  comment MENTIONING put_nowait in prose (e.g. in
+  LegacySyncInterfaceAdapter.py, explaining why it does NOT need that
+  exception) is not a violation.
+- Eighth: hits only inside RunStrategy.py (AsyncRunStrategy) -- exactly one
   executor construction, matching ADR-009's addendum. Any hit inside
   UDP4Interface.py, Simulation.py, or LegacySyncInterfaceAdapter.py is a
   violation -- those receive an executor by injection, they must never
   create one.
-- Sixth: empty -- interface_id always comes from register()'s parameter,
+- Ninth: empty -- interface_id always comes from register()'s parameter,
   never invented.
 
 Then run the full suite:
@@ -1624,7 +1663,7 @@ Stage exactly those files and commit with this message:
   AsyncRunStrategy explicitly, one at a time, ahead of Phase 5's node
   assembly.
 
-  UDP4Interface and SimulationInterface gain register()/async send()
+  UDP4Interface and SimulationInterface gain register()/send_async()
   alongside their existing sync methods -- one class, two coexisting
   surfaces, not a parallel hierarchy. AsyncRunStrategy composes Phase 2's
   AsyncLayerProcess as BasicLinkLayer's internal engine, bridging the still-

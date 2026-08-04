@@ -294,3 +294,83 @@ Full suite: 27/27 new + existing Phase 2 tests pass;
 
 unchanged from the "After Phase 2" result above (491 -> 500, +9 new tests;
 same 4 known native-code failures; no regressions).
+
+---
+
+## After Phase 3 (Tasks 3.1-3.6)
+
+`BasicLinkLayer` gains an injected `LinkLayerRunStrategy`
+(`PiCN/Layers/LinkLayer/RunStrategy.py`): `SyncRunStrategy` reproduces
+today's behaviour byte-for-byte and is the default; `AsyncRunStrategy` runs a
+real asyncio engine (composing Phase 2's `AsyncLayerProcess` unmodified)
+inside the layer's own forked process, opt-in per `ProgramLib`. `UDP4Interface`
+and `SimulationInterface` each gain `register()`/`send_async()` alongside
+their original, unchanged sync methods. `LegacySyncInterfaceAdapter` bridges
+old-style third-party interfaces. See `docs/design-adrs/ADR-008-baseinterface-contract.md`'s
+and `docs/design-adrs/ADR-009-cpu-bound-work.md`'s 2026-08-04 addenda for the
+full design.
+
+### A naming bug caught before it shipped
+
+ADR-008's own text names the new send method `async def send(...)`, reusing
+`send()`'s name. That cannot work: Python dispatches on name alone, so the
+second definition simply shadows the first, and every synchronous caller
+(`SyncRunStrategy`) would silently stop sending anything (an unawaited
+coroutine, never actually run) rather than raising. Caught while implementing
+Task 3.2, before it was ever wired up. Fixed by naming it `send_async`
+instead, matching `register()`'s already-distinct name. `docs/agent-tasks.md`
+was corrected in place (Tasks 3.2-3.5 and the Task 3.6 verification prompt)
+rather than left to describe code that was never actually built that way.
+
+### A real concurrency bug found and fixed (Task 3.3)
+
+`AsyncRunStrategy`'s first draft gave its bridge-to-legacy-queue executor
+`max_workers=1`. Inbound packets never arrived in `test_BasicLinkLayer_async.py`
+while outbound-only traffic worked fine -- the asymmetry was the clue.
+Root cause: `_bridge_from_higher`'s loop resubmits another
+indefinitely-blocking `layer._queue_from_higher.get()` to the executor
+*immediately* after every item, for as long as the engine runs, permanently
+occupying the pool's one and only thread. `data_from_lower`'s own, per-packet
+`run_in_executor(..., to_higher.put)` calls (needed since a
+`multiprocessing.Queue.put()` is not guaranteed non-blocking) then had no
+thread ever available to run on. Fixed by sizing the pool to `max_workers=4`
+-- ADR-009's addendum requires exactly one *executor* (one pool, one owner),
+not exactly one thread within it. Confirmed via a series of standalone
+repro scripts isolating `register()`, the faceidtable proxy call, and the
+executor dispatch independently before finding the interaction between them.
+
+### ADR grep verifications (nine checks; see Task 3.6's corrected prompt)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | No `self.sock.*` in `RunStrategy.py` | empty |
+| 2 | `self.sock.*` in `UDP4Interface.py` confined to the original sync methods | confirmed (lines inside `__init__`/`send`/`receive`/`get_port`/`close`/`enable_broadcast` only) |
+| 3 | `select.*` in `Simulation.py` confined to `SimulationBus._run` | confirmed (line 156-157, well inside `class SimulationBus` starting line 129, not `SimulationInterface` at line 23) |
+| 4 | No blocking calls in `LegacySyncInterfaceAdapter.py` | empty |
+| 5 | `file_descriptor` defined in exactly four files | `BaseInterface.py` (raising default), `UDP4Interface.py`, `Simulation.py` (real overrides), `LegacySyncInterfaceAdapter.py` (raising) |
+| 6 | `RunStrategy.py` never touches `.file_descriptor` | empty |
+| 7 | Exactly one real `put_nowait` outside tests | `UDP4Interface.py`'s `datagram_received`, with justifying comment (a second grep hit in `LegacySyncInterfaceAdapter.py` is prose in a comment, not code) |
+| 8 | Exactly one executor construction outside tests | `RunStrategy.py`'s `AsyncRunStrategy._async_main` only |
+| 9 | No invented interface identity (`id(self)`/`uuid`) | empty |
+
+### Full-suite run
+
+```
+python -m pytest -v --timeout=90 -p no:cacheprovider
+515 collected, 511 passed, 4 failed, in 644s (0:10:44)
+```
+
+**No regressions.** Same 4 known native-code failures as every prior phase
+(`test_x86Executor.py` x2, `test_FetchNFN.py`'s
+`...test_fetch_single_data_from_repo_over_forwarder_native_code` x2 -- see
+"After Phase 1" above for root cause). Collected count went from 500 to 515,
++15, exactly the 15 new tests added this phase (4 in
+`test_UDP4Interface_async.py`, 3 in `test_BasicLinkLayer_async.py`, 5 in
+`test_LegacySyncInterfaceAdapter.py`, 3 in `test_Simulation_async.py`) --
+fully accounted for, no drift this time.
+
+`PiCN/Layers/LinkLayer PiCN/ProgramLibs/ICNForwarder` (ADR-008's literal exit
+criterion) also run standalone at each task boundary throughout this phase:
+consistently unaffected, confirming `SyncRunStrategy`-driven `BasicLinkLayer`
+-- i.e. every existing `ProgramLib` -- is byte-for-byte unaffected by
+everything added this phase.

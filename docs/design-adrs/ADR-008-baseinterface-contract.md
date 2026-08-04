@@ -264,9 +264,11 @@ async-only: they keep supporting `SyncRunStrategy`, so their own
 grep -rln "def file_descriptor" PiCN/Layers/LinkLayer/ --include=*.py
 ```
 
-Expect hits in exactly three places: `BaseInterface` (the raising default),
-`UDP4Interface`, and `SimulationInterface` (both real, unchanged overrides).
-The important check is not the hit *count* but that **`AsyncRunStrategy` and
+Expect hits in exactly four places: `BaseInterface` (the raising default),
+`UDP4Interface` and `SimulationInterface` (both real, unchanged overrides, for
+`SyncRunStrategy`'s sake), and `LegacySyncInterfaceAdapter` (also raising --
+an interface driven by `AsyncRunStrategy`, native or adapted, never supports
+this). The important check is not the hit *count* but that **`AsyncRunStrategy` and
 its interface calls never appear in this grep** -- the new async path must
 never touch `file_descriptor`, regardless of how many places still define it
 for the sync path's sake. Grep for that directly:
