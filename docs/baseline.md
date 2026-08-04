@@ -1,7 +1,7 @@
 # Phase 1 Baseline — Test Results
 
 Date: 2026-08-03
-Branch: `modernization/asyncio-python314`
+Developed on branch `modernization/asyncio-python314` prior to merge.
 Python version: 3.12.3 (tested on)
 Target Python range: 3.6 -- 3.14
 

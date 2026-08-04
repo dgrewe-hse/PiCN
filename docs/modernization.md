@@ -1,11 +1,15 @@
 # Modernization Plan: Python 3.14 and asyncio
 
-Branch: `modernization/asyncio-python314`
+**Status: complete.** Developed on branch `modernization/asyncio-python314`
+prior to merge, phases 0–8. Kept as the rationale and audit trail for the
+migration; see [`docs/design-adrs/`](design-adrs/README.md) for the resulting
+design decisions and [`docs/baseline.md`](baseline.md) for the per-phase test
+evidence.
 
-This document is the task plan for bringing PiCN to current Python and replacing
-its `multiprocessing`-per-layer execution model with `asyncio`. It is written to
-be executed incrementally, by humans or AI coding agents, with a verifiable
-state at the end of each phase.
+This document was the task plan for bringing PiCN to current Python and
+replacing its `multiprocessing`-per-layer execution model with `asyncio`. It
+was written to be executed incrementally, by humans or AI coding agents, with a
+verifiable state at the end of each phase.
 
 Working conventions are in [`AGENTS.md`](../AGENTS.md).
 

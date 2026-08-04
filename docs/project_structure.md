@@ -1,6 +1,7 @@
 # Package Structure
 
-Package layout of PiCN on branch `modernization/asyncio-python314`.
+Package layout of PiCN, including the dual sync/async runtime added by the
+Python 3.14 / asyncio migration (see [modernization.md](modernization.md)).
 
 ### Top level
 

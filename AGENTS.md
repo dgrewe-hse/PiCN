@@ -12,11 +12,12 @@ packet encoding, ICN forwarding (Content Store, FIB, PIT), chunking,
 repository, and NFN computation — that can be assembled into different node
 types (forwarder, repository, NFN node).
 
-## State of this branch
+## State of this codebase
 
-Branch `modernization/asyncio-python314` carries a **completed** modernization:
-Python 3.14 support, an `asyncio` runtime alongside the original
-multiprocessing-per-layer path, and a `pytest` suite with CI.
+PiCN has been through a **completed** modernization (originally developed on
+branch `modernization/asyncio-python314` prior to merge): Python 3.14 support,
+an `asyncio` runtime alongside the original multiprocessing-per-layer path, and
+a `pytest` suite with CI.
 
 - [`docs/design-adrs/`](docs/design-adrs/README.md) — the design decisions, each
   with binding rules and verification commands. **Read these before changing

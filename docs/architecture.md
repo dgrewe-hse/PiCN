@@ -5,8 +5,8 @@ However, also meant to be a handy toolbox for prototyping and experimentation, P
 This document describes the building blocks of PiCN.
 If you are interested in ready-to-run code, go to [Runnables](toolbox.md).
 
-The branch `modernization/asyncio-python314` keeps this layered model and adds a
-parallel **asyncio** execution path. Protocol behaviour (packet formats,
+Since the Python 3.14 / asyncio migration, PiCN keeps this layered model and
+adds a parallel **asyncio** execution path. Protocol behaviour (packet formats,
 forwarding semantics) is unchanged; see [modernization.md](modernization.md).
 
 ### Layered Architecture

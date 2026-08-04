@@ -1,6 +1,6 @@
 # PiCN
 
-[![CI](https://github.com/dgrewe-hse/PiCN/actions/workflows/ci.yml/badge.svg?branch=modernization/asyncio-python314)](https://github.com/dgrewe-hse/PiCN/actions/workflows/ci.yml?query=branch%3Amodernization%2Fasyncio-python314)
+[![CI](https://github.com/cn-uofbasel/PiCN/actions/workflows/ci.yml/badge.svg)](https://github.com/cn-uofbasel/PiCN/actions/workflows/ci.yml)
 
 PiCN is a:
 
@@ -9,10 +9,12 @@ PiCN is a:
 * platform for [Named Function Networking (NFN)](docs/nfn.md)
 * simple [simulation system](docs/simulation.md) for ICN and NFN
 
-This repository is a fork of [cn-uofbasel/PiCN](https://github.com/cn-uofbasel/PiCN).
-The branch `modernization/asyncio-python314` modernises the stack for **Python 3.14**
-and adds an **asyncio** runtime alongside the classic multiprocessing-per-layer path.
-Default behaviour remains **sync** so existing workflows keep working.
+PiCN supports **Python 3.14** and includes an **asyncio** runtime alongside the
+original multiprocessing-per-layer path (`--runtime sync|async`, default
+**sync**, so existing workflows keep working unchanged). See
+[`docs/modernization.md`](docs/modernization.md) for how the migration got
+here and [`docs/design-adrs/`](docs/design-adrs/README.md) for the design
+rationale behind the dual runtime.
 
 | Topic | Doc |
 |---|---|
@@ -42,16 +44,15 @@ Default behaviour remains **sync** so existing workflows keep working.
 
 ## Requirements
 
-* **Python ≥ 3.14** (this branch; see `pyproject.toml`)
+* **Python ≥ 3.14** (see `pyproject.toml`)
 * No hard runtime dependencies for the default CLI path
 * Optional: `pip install "PiCN[dev]"` for pytest; `pip install "PiCN[config]"` for `picn-relay -c` TOML configs (`pytoml`)
 
 ## Setup
 
 ```console
-git clone https://github.com/dgrewe-hse/PiCN.git
+git clone https://github.com/cn-uofbasel/PiCN.git
 cd PiCN
-git checkout modernization/asyncio-python314
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 export PATH="$PATH:$(pwd)/starter"

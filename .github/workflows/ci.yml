@@ -5,13 +5,13 @@ name: CI
 # environment-sensitive — see docs/baseline.md).
 #
 # Full suite also runs on macos-latest. Darwin native-code tests skip when
-# the NFN-x86-file-osx fixture is absent (Task 7.1) — they must not fail CI.
+# the NFN-x86-file-osx fixture is absent — they must not fail CI.
 
 on:
   push:
-    branches: [modernization/asyncio-python314]
+    branches: [master]
   pull_request:
-    branches: [modernization/asyncio-python314]
+    branches: [master]
   workflow_dispatch: {}
 
 concurrency:
