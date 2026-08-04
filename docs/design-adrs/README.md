@@ -22,7 +22,8 @@ say *why, and what not to do instead*.
 | 1 — Python 3.14 | ADR-002 |
 | 2 — Async foundations | ADR-003, ADR-004, ADR-005, ADR-006, ADR-007 |
 | 3 — I/O boundary | ADR-008 (plus all of Phase 2's) |
-| 4 — Remaining layers | ADR-009 |
+| 4 — Remaining layers | ADR-003 addendum, ADR-009 |
+| 5 — Node assembly | ADR-004 addendum (shared builders), ADR-006 addendum (AsyncMgmt), ADR-009 |
 | 7 — Tests and CI | ADR-010 |
 
 ## Index

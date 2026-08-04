@@ -98,3 +98,62 @@ grep -rn "_reader" PiCN/ --include=*.py | grep -v test
 ```
 
 Expect **empty output**.
+
+---
+
+## Addendum (2026-08-04) — Shared builders + stack choice (Phase 5)
+
+Phase 4 left every `ProgramLib` on sync `LayerStack` + sync layer wrappers.
+Phase 5 wires nodes onto `AsyncLayerStack` without a parallel
+`AsyncICNForwarder` hierarchy (rejected) and without converting ProgramLibs
+in place to async-only (rejected — would break callers mid-migration).
+
+### Decision
+
+**Shared builders with an explicit runtime / stack choice:**
+
+- One builder (or small builder module) per node type constructs data
+  structures and layers.
+- A parameter (e.g. `runtime: Literal["sync", "async"]` or an enum) selects:
+  - **sync:** today's path — `PiCNSyncDataStructFactory` / Manager proxies,
+    sync layer wrappers, `LayerStack`, `BasicLinkLayer` + `SyncRunStrategy`,
+    sync `Mgmt` process.
+  - **async:** plain in-process CS/FIB/PIT/FaceIDTable (no Manager), async
+    layer wrappers, `AsyncLayerStack` (owns the executor per ADR-009),
+    `AsyncBasicLinkLayer` (promoted from Phase 3's `_LinkLayerEngine` —
+    no forked child, no temporary bridge executor), and `AsyncMgmt` as an
+    asyncio TCP server task in the **same** event loop (ADR-006).
+
+Public class names (`ICNForwarder`, `NFNForwarder`, …) stay. Callers that
+pass nothing get **sync** (byte-for-byte today's behaviour). Opt into async
+explicitly.
+
+### Link layer under async runtime
+
+`AsyncRunStrategy`'s forked-process + bridge-executor design was a Phase 3
+temporary seam (ADR-008/009 addenda). Under a real `AsyncLayerStack` that
+seam is deleted for the async path: the link layer is an
+`AsyncLayerProcess` in the stack. The Phase 3 temporary executor in
+`AsyncRunStrategy` remains only for any still-sync ProgramLib that opts
+into `AsyncRunStrategy` explicitly; async ProgramLibs must not use it.
+
+### Ageing
+
+Do **not** call sync `ageing()` when using async ICN / TimeoutPrevention
+wrappers — those start ageing tasks from `start()`. Sync builders must
+branch on runtime here.
+
+### Verification
+
+```bash
+grep -rn "AsyncICNForwarder\|AsyncNFNForwarder\|AsyncFetch" PiCN/ProgramLibs/ --include='*.py'
+```
+
+Expect **empty** — no parallel ProgramLib class hierarchy.
+
+```bash
+grep -rn "PiCNSyncDataStructFactory\|create_manager" PiCN/ProgramLibs/ --include='*.py' | grep -v test
+```
+
+Hits remain on the **sync** builder path only; the async path must not
+create a Manager.

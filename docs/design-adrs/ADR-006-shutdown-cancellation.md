@@ -155,3 +155,29 @@ Expect a passing test that starts a stubborn layer, calls `stop()` with a
 short timeout, and asserts the task is genuinely still running afterward
 (proving the timeout — not a clean stop — occurred), then cleans it up with a
 second, unhandled cancellation.
+
+---
+
+## Addendum (2026-08-04) — AsyncMgmt in the node event loop (Phase 5)
+
+Sync `Mgmt` runs as a `multiprocessing.Process` with blocking `accept()` /
+`recv()`, and `stop_process()` uses `terminate()` plus timing sleeps — the
+exact pattern this ADR forbids.
+
+### Decision
+
+For the **async** ProgramLib runtime, port management into
+`AsyncMgmt`: an asyncio TCP server (`asyncio.start_server` or equivalent)
+on `127.0.0.1:port`, running as a supervised task in the **same** event
+loop as `AsyncLayerStack`. Shutdown:
+
+1. Cancel the Mgmt server task (and close the listening socket).
+2. Await it bounded by `SHUTDOWN_TIMEOUT`.
+3. Then `await stack.stop_all()` (which shuts the stack executor last —
+   ADR-009).
+
+Do **not** call `process.terminate()` or `time.sleep` on the async path.
+The sync `Mgmt` class remains for the sync runtime until Phase 6.
+
+HTTP request parsing and FIB/CS/PIT mutation semantics stay characterized —
+do not change management wire format while changing the transport.

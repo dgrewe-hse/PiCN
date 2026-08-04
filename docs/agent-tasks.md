@@ -18,6 +18,7 @@ a verification command.
 | 2 | ADR-003, ADR-004, ADR-005, ADR-006, ADR-007, ADR-010 |
 | 3 | ADR-008 (and its 2026-08-04 addendum), ADR-009 (and its 2026-08-04 addendum) |
 | 4 | ADR-003 (and its 2026-08-04 extract-core addendum), ADR-009 (and its 2026-08-04 addendum), ADR-010 |
+| 5 | ADR-004 (and its 2026-08-04 shared-builder addendum), ADR-006, ADR-009 |
 
 ---
 
@@ -2095,27 +2096,354 @@ Do not start Phase 5 until **all** are true:
 
 ---
 
-# Phases 5–7 — expand before use
+# Phase 5 — Node assembly via shared builders
 
-The remaining phases are specified in [`modernization.md`](modernization.md) but
-are **not yet broken down to prompt level**. Expand each into tasks using the
-same format before handing to a small model:
+**Purpose:** wire `ProgramLibs`, `Mgmt`, `starter/` executables, and one
+simulation onto `AsyncLayerStack` + async layer wrappers, without a
+parallel `AsyncICNForwarder` hierarchy.
+
+**Decisions (locked 2026-08-04):**
+
+1. **Shared builders + stack choice** — one builder per node type;
+   `runtime="sync"|"async"` (default `"sync"`).
+2. **Async runtime uses plain in-process CS/FIB/PIT/FaceIDTable** — no
+   `PiCNSyncDataStructFactory` / Manager on the async path.
+3. **`AsyncMgmt`** — asyncio TCP server in the same event loop (ADR-006
+   addendum).
+4. **Include `NFNForwarderData`** (default yes — used by data-offloading
+   simulations; drop only if explicitly requested).
+5. **Coverage:** do not block Phase 5 on per-module ≥80%; aggregate ≥80%
+   from Phase 4 is enough. Coverage fill is Phase 8.
+
+**Simulation exit gate (default):**
+[`PiCN/Simulations/SimulationsTutorial.py`](../PiCN/Simulations/SimulationsTutorial.py)
+runnable under async ProgramLibs (or a documented minimal scenario if that
+file proves too heavy — record the choice in the baseline).
+
+**Commit policy:** one commit for this planning expansion; then one commit
+per task group (builders/link, Mgmt, each ProgramLib family, starters,
+simulation, baseline).
+
+> **Read first:** [ADR-004](design-adrs/ADR-004-async-layerstack.md)
+> (2026-08-04 shared-builder addendum),
+> [ADR-006](design-adrs/ADR-006-shutdown-cancellation.md) (AsyncMgmt
+> addendum), [ADR-009](design-adrs/ADR-009-cpu-bound-work.md),
+> [ADR-008](design-adrs/ADR-008-baseinterface-contract.md) (link/interfaces).
+
+### Task 5.0 — Promote `AsyncBasicLinkLayer`; shared runtime helpers
+
+**Goal:** public `AsyncBasicLinkLayer` usable inside `AsyncLayerStack`
+(no forked process, no Phase-3 bridge executor). Shared helpers for
+`runtime` selection and plain vs Manager data structs.
+
+**Files:** creates/moves `PiCN/Layers/LinkLayer/AsyncBasicLinkLayer.py`
+(from `RunStrategy._LinkLayerEngine`); creates
+`PiCN/ProgramLibs/runtime.py` (or `builders/common.py`) with
+`Runtime` enum and `make_icn_tables(runtime)` helpers; tests.
+
+**Prompt:**
+
+```
+Read RunStrategy.py (_LinkLayerEngine, AsyncRunStrategy) and ADR-004's
+2026-08-04 addendum.
+
+1. Promote _LinkLayerEngine to AsyncBasicLinkLayer(AsyncLayerProcess) in
+   its own module. register() every interface with the stack's
+   queue_from_lower; interface_id = enumerate index. Accept optional
+   executor for SimulationInterface.register(..., executor=). Wire
+   send_async on outbound. Export from LinkLayer __init__.
+
+2. AsyncRunStrategy may keep using the engine internally for backwards
+   compatibility OR delegate to AsyncBasicLinkLayer -- do not break
+   test_BasicLinkLayer_async.py.
+
+3. Add ProgramLibs/runtime.py:
+   class Runtime(str, Enum): SYNC = "sync"; ASYNC = "async"
+   def make_forwarding_tables(runtime, ...) -> named tuple of cs,fib,pit,
+   faceidtable[,rib]: SYNC uses PiCNSyncDataStructFactory; ASYNC
+   constructs ContentStoreMemoryExact etc. directly (plain objects).
+
+4. Tests: AsyncBasicLinkLayer packet exchange with AsyncLayerStack (two
+   nodes or UDP loopback) without multiprocessing.Process. Existing
+   LinkLayer async tests still pass.
+
+Do not modify ProgramLibs node classes yet.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer PiCN/LayerStack -q --timeout=90
+```
+
+**Expect:** all pass, including new AsyncBasicLinkLayer + stack tests.
+
+---
+
+### Task 5.1 — `AsyncMgmt`
+
+**Goal:** asyncio TCP management server with the same HTTP semantics as
+sync `Mgmt`, no `terminate()` / `sleep`.
+
+**Files:** creates `PiCN/Mgmt/AsyncMgmt.py` +
+`PiCN/Mgmt/test/test_AsyncMgmt.py`; sync `Mgmt.py` unchanged.
+
+**Prompt:**
+
+```
+Read Mgmt.py in full and ADR-006's AsyncMgmt addendum.
+
+Implement AsyncMgmt with:
+- __init__(cs, fib, pit, linklayer, port, shutdown=None, ...)
+- async def start() -- asyncio.start_server on 127.0.0.1:port; store
+  server + serve task
+- async def stop(timeout=SHUTDOWN_TIMEOUT) -- close server, cancel serve
+  task, await bounded (asyncio.wait, not wait_for alone -- see ADR-006)
+- Request handling: reuse/adapt sync parsing so FIB/CS ops and
+  /shutdown callback behaviour match observed Mgmt (characterize with
+  tests against sync first if unsure)
+- shutdown callback for async is an async callable or schedules
+  stop_forwarder; do not time.sleep(2)
+
+Tests (plain pytest + asyncio): start, add FIB entry via HTTP client
+(asyncio open_connection), shutdown path cancels cleanly. Do not break
+test_Mgmt.py.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Mgmt -q --timeout=60
+```
+
+**Expect:** sync + async Mgmt tests pass.
+
+---
+
+### Task 5.2 — ICNForwarder shared builder
+
+**Goal:** `ICNForwarder(..., runtime=Runtime.SYNC|ASYNC)` builds the
+appropriate stack; default SYNC unchanged.
+
+**Files:** `ICNForwarder.py`, creates builder helper if needed,
+`test_ICNForwarder_async.py`.
+
+**Prompt:**
+
+```
+Refactor ICNForwarder construction through a shared builder. Default
+runtime=SYNC must keep existing tests green without edits where
+possible.
+
+ASYNC path:
+- plain tables via make_forwarding_tables(ASYNC)
+- AsyncBasicICNLayer, AsyncBasicPacketEncodingLayer, AsyncBasicLinkLayer
+  (plus async autoconfig/routing wrappers if those flags are set)
+- AsyncLayerStack; inject executor into layers that need it
+- AsyncMgmt
+- async def start_forwarder() / async def stop_forwarder()  -- OR
+  start_forwarder detects runtime and for ASYNC requires being called
+  from a running loop / returns a coroutine. Prefer explicit
+  async start_forwarder_async / stop_forwarder_async names if that
+  avoids breaking sync callers that call start_forwarder() without
+  await. Document the choice.
+
+Do NOT call icnlayer.ageing() on the async path.
+Add async integration test: start, mgmt or UDP interest/content path,
+stop. Sync test_ICNForwarder.py must pass unchanged.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs/ICNForwarder -q --timeout=90
+```
+
+**Expect:** all pass.
+
+---
+
+### Task 5.3 — Fetch shared builder
+
+**Goal:** same pattern for `Fetch` (picn-fetch exit criterion).
+
+**Files:** `Fetch.py`, async tests.
+
+**Prompt:**
+
+```
+Apply Task 5.2's pattern to Fetch. Async path: AsyncLayerStack + async
+layers + no Mgmt. Ensure fetch_data / interest paths work under
+asyncio.run. Sync tests unchanged.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs/Fetch -q --timeout=120
+```
+
+**Expect:** pass except known native-code FetchNFN failures on macOS.
+
+---
+
+### Task 5.4 — NFNForwarder (+ Thunk) shared builder
+
+**Goal:** NFN forwarder async runtime; ageing only on sync path.
+
+**Files:** `NFNForwarder.py`, async tests.
+
+**Prompt:**
+
+```
+Shared builder for NFNForwarder. Async: AsyncBasicNFNLayer with
+executor from AsyncLayerStack, AsyncBasicChunkLayer,
+AsyncBasicTimeoutPreventionLayer, optional AsyncBasicThunkLayer,
+AsyncBasicICNLayer, etc. Do not call ageing() on async wrappers.
+Async tests: simple compute interest if feasible; otherwise stack
+start/stop + one packet path. Sync tests unchanged (known x86
+failures ok).
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs/NFNForwarder -q --timeout=120
+```
+
+**Expect:** sync suite as before; new async tests green.
+
+---
+
+### Task 5.5 — ICNDataRepository, ICNPushRepository, NFNForwarderData
+
+**Goal:** remaining ProgramLibs on the shared-builder pattern
+(including NFNForwarderData).
+
+**Files:** the three ProgramLib modules + async smoke tests.
+
+**Prompt:**
+
+```
+Port ICNDataRepository, ICNPushRepository, and NFNForwarderData using
+the same runtime= switch. One commit is fine for this task if the
+diffs stay reviewable; split if large. Sync tests must pass.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs/ICNDataRepository PiCN/ProgramLibs/ICNPushRepository PiCN/ProgramLibs/NFNForwarder -q --timeout=120
+```
+
+**Expect:** pass (same known failures only).
+
+---
+
+### Task 5.6 — Executables / starter SIGINT
+
+**Goal:** async-capable entry points run `asyncio.run` when asked;
+SIGINT cancels cleanly (ADR-006).
+
+**Files:** `PiCN/Executable/*.py`, possibly `starter/` wrappers.
+
+**Prompt:**
+
+```
+Add a --runtime async|sync flag (default sync) to picn-relay,
+picn-fetch, and picn-nfn executables (and repo/pushrepo if
+straightforward). Async main:
+  try: await node.start_...(); await wait_forever_or_event()
+  finally: await node.stop_...()
+Install SIGINT/SIGTERM handlers that trigger stop. Sync path
+unchanged. Smoke-test by importing and running start/stop in
+pytest with runtime=async where practical -- do not require
+manual CLI in CI.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs PiCN/Executable -q --timeout=120 2>/dev/null || python -m pytest PiCN/ProgramLibs -q --timeout=120
+```
+
+**Expect:** no new failures.
+
+---
+
+### Task 5.7 — One simulation under async ProgramLibs
+
+**Goal:** Phase 5 exit criterion — at least one simulation scenario runs
+with async runtime.
+
+**Files:** adapt `SimulationsTutorial.py` (or document alternate) to
+accept runtime=async; minimal test or scripted verify.
+
+**Prompt:**
+
+```
+Wire SimulationsTutorial (default gate) to construct forwarders with
+runtime=async. SimulationBus may remain sync (Phase 3
+SimulationInterface.register + stack executor). Verify the tutorial's
+basic exchange completes under asyncio.run. Record which scenario
+was used in docs/baseline.md.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Simulations -q --timeout=120 2>/dev/null; .venv/bin/python -c "print('manual sim verify documented in baseline')"
+```
+
+**Expect:** scenario completes; documented in baseline.
+
+---
+
+### Task 5.8 — Verification sweep + baseline
+
+**Goal:** ADR greps + full suite vs Phase 4 baseline; "After Phase 5".
+
+**Prompt:**
+
+```
+grep -rn "AsyncICNForwarder\|AsyncNFNForwarder" PiCN/ProgramLibs/
+grep -rn "create_manager" PiCN/ProgramLibs/ --include='*.py' | grep -v test
+# async builders must not hit create_manager -- inspect by reading
+
+Full suite; compare to After Phase 4. Add After Phase 5 to
+docs/baseline.md. Tick exit criteria.
+```
+
+**Verify:**
+```bash
+grep -A15 "After Phase 5" docs/baseline.md
+```
+
+**Expect:** section present; no regressions outside new tests.
+
+---
+
+## Phase 5 exit criteria
+
+Do not start Phase 6 until **all** are true:
+
+- [ ] Shared builders exist; default runtime remains sync
+- [ ] Async runtime uses plain in-process tables (no Manager)
+- [ ] `AsyncMgmt` + `AsyncBasicLinkLayer` in the node event loop
+- [ ] `picn-relay`, `picn-fetch`, NFN forwarder work e2e under async
+- [ ] `NFNForwarderData` included (or explicitly deferred in baseline)
+- [ ] At least one simulation runs under async ProgramLibs
+- [ ] `docs/baseline.md` has "After Phase 5"; no ProgramLib regressions
+      on the sync default path
+
+---
+
+# Phases 6–7 — expand before use
 
 | Phase | Theme | Governing ADRs | Expand when |
 |---|---|---|---|
-| 5 | Node assembly — `ProgramLibs`, `Mgmt`, `starter/`, simulations | 006 | Phase 4 exits |
 | 6 | Delete the multiprocessing scaffolding | 002, 004 | Phase 5 exits |
 | 7 | Test infrastructure and CI | 010 | Phase 6 exits |
 | 8 | Coverage completion (runs continuously) | 010 | Any time after 7 |
 
 ### Rules that carry forward
 
-- Every task that changes behaviour must end with a baseline comparison, as in
-  Task 1.8.
-- Phase 6 deletes code. Only delete what Phases 2–5 made unreachable — verify
-  with `grep`, not assumption.
-- CI (Phase 7) should run the fast checks on every push, and slower full-stack
-  tests on pull requests.
+- Phase 6 deletes code. Only delete what Phases 2–5 made unreachable —
+  verify with `grep`, not assumption.
+- CI (Phase 7) should run the fast checks on every push, and slower
+  full-stack tests on pull requests.
 
 ---
 
