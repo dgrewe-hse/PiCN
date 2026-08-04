@@ -59,13 +59,15 @@ execution primitive change.
 
 ## Consequences
 
-- `_run_poll`, `_run_select`, `_run_sleep`, and `in_unittest()` are all deleted
-  in Phase 6.
-- `import select` disappears from layer code.
-- The `os.name == 'nt'` branch goes away; asyncio supports Windows natively,
-  which is a capability gain rather than only a simplification.
-- Layers no longer have a `.process`; they have a task (see ADR-006).
-- CPU-bound work now needs explicit handling (ADR-009).
+- `_run_poll`, `_run_select`, `_run_sleep`, and `in_unittest()` are deleted
+  when the sync runtime is retired (originally “Phase 6”; **deferred** —
+  see 2026-08-04 Phase 6 addendum while dual runtime remains).
+- `import select` disappears from layer code on that same retirement.
+- The `os.name == 'nt'` branch goes away with the sync run loops; asyncio
+  supports Windows natively on the async path today.
+- Async layers have a task, not `.process` (see ADR-006); sync layers still
+  use `.process` until sync is retired.
+- CPU-bound work needs explicit handling (ADR-009).
 
 ## Rules for implementers
 
@@ -157,3 +159,39 @@ grep -rn "PiCNSyncDataStructFactory\|create_manager" PiCN/ProgramLibs/ --include
 
 Hits remain on the **sync** builder path only; the async path must not
 create a Manager.
+
+---
+
+## Addendum (2026-08-04) — Phase 6 narrowed: dual runtime retained
+
+Phase 5 shipped shared builders with **default sync**. Original Phase 6 text
+(delete all three run loops, pickling, `select`, sync Mgmt, …) assumed
+nothing still depended on multiprocessing. That assumption is false while
+`runtime=sync` remains supported.
+
+### Decision
+
+**Narrow Phase 6 to dead-code cleanup + deferred ports + docs.** Do **not**
+delete `LayerProcess` / `SyncRunStrategy` / sync `Mgmt` / Manager factories /
+`configure_start_method` while the sync ProgramLib path exists.
+
+| Keep | Delete / finish in Phase 6 |
+|---|---|
+| Sync ProgramLibs + `Basic*Layer` wrappers | Production-dead helpers (verify with grep — e.g. unused adapters) |
+| `SimulationBus` as MP process | Port **or** delete `Playground/` MP demos |
+| Dual `runtime=` switch | Port DataOffloading → enable `NFNForwarderData` async, **or** delete that variant |
+| ADR-002 fork bridge (sync tests) | Update `architecture.md` / `project_structure.md` for dual runtime |
+
+Full scaffolding removal (original Phase 6 list) is **deferred** to a later
+phase that flips or removes the sync runtime.
+
+### Verification greps (Phase 6)
+
+Do **not** expect empty `multiprocessing` imports. Expect:
+
+1. Documented exception list in `docs/baseline.md` After Phase 6.
+2. No production imports of modules marked deleted in this phase.
+3. `Playground/` either gone or free of `LayerProcess` / raw MP process stacks
+   (or explicitly listed as remaining exception — prefer gone/ported).
+4. `NFNForwarderData(runtime=async)` works **or** the class is removed /
+   permanently documented as sync-only without a NotImplementedError trap.

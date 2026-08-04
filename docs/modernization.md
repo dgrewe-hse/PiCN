@@ -222,22 +222,35 @@ end-to-end, and at least one simulation scenario runs.
 
 ---
 
-### Phase 6 — Remove the multiprocessing scaffolding
+### Phase 6 — Remove unused multiprocessing scaffolding (narrowed)
 
-Only once nothing depends on it:
+Phase 5 left a **dual runtime** (`runtime=sync|async`, default sync). Full
+deletion of `LayerProcess` / sync `Mgmt` / Manager factories would break the
+sync path. Phase 6 therefore **does not** retire sync; it deletes only what
+is already unused, finishes deferred async ports that block honest greps,
+and updates docs.
 
-- [ ] Delete `_run_poll`, `_run_select`, `_run_sleep`.
-- [ ] Delete `in_unittest()`.
-- [ ] Delete `__getstate__`/`__setstate__` pickling support in `PiCNProcess`.
-- [ ] Remove `multiprocessing`, `select`, and now-unused `time.sleep` imports.
-- [ ] Remove the Windows-specific `os.name == 'nt'` branch — asyncio handles
-      Windows natively, which is a genuine capability improvement rather than
-      just a simplification.
-- [ ] Update `docs/architecture.md` and `docs/project_structure.md` to describe
-      the async model.
+Locked decisions (2026-08-04):
 
-**Exit criteria:** no `multiprocessing` import outside of any deliberately
-retained executor usage.
+1. Keep sync + async; delete dead code only.
+2. Keep `SimulationBus` as an MP process (async nodes + sync bus); document
+   an explicit exception in verification greps.
+3. `Playground/` and DataOffloading / `NFNForwarderData` async: **port or
+   delete** before Phase 6 greps are considered green.
+4. Keep thin sync `Basic*Layer` wrappers (full scaffolding removal later).
+5. Update `docs/architecture.md` and `docs/project_structure.md` as an
+   exit criterion.
+
+- [ ] Inventory and ADR addendum: narrowed Phase 6 vs original modernization.md
+- [ ] Delete production-dead helpers (e.g. unused adapters) verified by grep
+- [ ] Port or delete DataOffloading + enable `NFNForwarderData` async
+- [ ] Port or delete `Playground/` MP layers
+- [ ] Document MP grep exceptions (sync ProgramLibs, SimulationBus, …)
+- [ ] Update architecture / project_structure docs for dual runtime
+
+**Exit criteria:** dead code gone; Playground and DataOffloading resolved;
+docs describe sync+async; greps match the documented exception list (not
+“zero multiprocessing”). Full sync-path removal is deferred to a later phase.
 
 ---
 

@@ -1,6 +1,8 @@
 # ADR-002: Set the process start method explicitly to `fork`
 
-- **Status:** Accepted (temporary — retired by Phase 6)
+- **Status:** Accepted (temporary — retained while `runtime=sync` exists;
+  original “retired by Phase 6” deferred; see ADR-004's 2026-08-04 Phase 6
+  addendum)
 - **Date:** 2026-08-03
 - **Phase:** 1
 - **Relates to:** `agent-tasks.md` Task 1.6

@@ -290,8 +290,8 @@ exactly one production `UDP4Interface` today, actively depended on by every
 ProgramLib, and duplicating it would be more confusing than a wider single
 class, not less.
 
-**Phase 6 still deletes.** Once every ProgramLib has moved to
-`AsyncRunStrategy` (Phase 5) and `LayerStack`/`LayerProcess` are removed
-(Phase 6), `SyncRunStrategy` and the old sync methods on the interfaces are
-exactly the kind of now-unreachable code Phase 6 exists to delete -- verify
-with `grep`, per `AGENTS.md`, not assumption.
+**Phase 6 (narrowed 2026-08-04):** dual runtime retained — do **not** delete
+`SyncRunStrategy` or sync interface methods while `runtime=sync` ProgramLibs
+exist. Phase 6 only deletes production-dead helpers and finishes
+Playground/DataOffloading; see ADR-004's Phase 6 addendum. Full interface
+sync-surface deletion waits until sync runtime is retired.

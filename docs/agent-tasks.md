@@ -19,6 +19,7 @@ a verification command.
 | 3 | ADR-008 (and its 2026-08-04 addendum), ADR-009 (and its 2026-08-04 addendum) |
 | 4 | ADR-003 (and its 2026-08-04 extract-core addendum), ADR-009 (and its 2026-08-04 addendum), ADR-010 |
 | 5 | ADR-004 (and its 2026-08-04 shared-builder addendum), ADR-006, ADR-009 |
+| 6 | ADR-004 (Phase 6 dual-runtime addendum), ADR-002 (retained), ADR-008 |
 
 ---
 
@@ -2436,18 +2437,259 @@ Do not start Phase 6 until **all** are true:
 
 ---
 
-# Phases 6–7 — expand before use
+# Phase 6 — Dead-code cleanup (dual runtime retained)
+
+**Purpose:** delete only what Phases 2–5 made **unreachable**, finish
+Playground / DataOffloading so greps stay honest, and document the dual
+runtime. Do **not** remove sync ProgramLibs or `LayerProcess`.
+
+**Decisions (locked 2026-08-04):**
+
+1. **Keep sync + async** — delete unused code only; leave sync scaffolding.
+2. **Keep MP `SimulationBus`** — async nodes + sync bus (Phase 5.7); explicit
+   grep exception.
+3. **Playground + DataOffloading** — port to async **or** delete before
+   Phase 6 greps are green.
+4. **Keep thin sync `Basic*Layer` wrappers** — full scaffolding removal later.
+5. **Docs** — update `architecture.md` and `project_structure.md` as an
+   exit criterion.
+
+**Commit policy:** one planning commit; then one commit per task (or
+Playground delete as one commit if choosing deletion).
+
+> **Read first:** [ADR-004](design-adrs/ADR-004-async-layerstack.md)
+> (Phase 6 dual-runtime addendum), [ADR-002](design-adrs/ADR-002-process-start-method.md)
+> (retained), [ADR-008](design-adrs/ADR-008-baseinterface-contract.md).
+
+### Task 6.0 — Inventory: confirm what is dead
+
+**Goal:** produce a written list of production modules/symbols with **zero**
+non-test callers that Phase 6 may delete; list everything that must stay for
+sync.
+
+**Files:** creates/updates a short section under `docs/baseline.md` or a
+checklist inside this task's Verify notes; may only **read** `PiCN/` for the
+inventory (no deletions yet).
+
+**Prompt:**
+
+```
+Using grep (not assumption), inventory:
+
+KEEP (must not delete in Phase 6): LayerProcess, _run_*, in_unittest,
+PiCNProcess pickling, SyncRunStrategy, sync Mgmt, PiCNSyncDataStructFactory,
+configure_start_method, Basic*Layer sync wrappers, SimulationBus MP,
+BasicLinkLayer select loops.
+
+CANDIDATE DELETE: any production module with no non-test importers
+(known suspect: LegacySyncInterfaceAdapter — confirm). List others.
+
+Playground: list every file importing LayerProcess or multiprocessing.
+DataOffloading: list DataOffloadingChunklayer* and NFNForwarderData.
+
+Write the KEEP / CANDIDATE DELETE / PLAYGROUND / DATAOFFLOAD lists into
+docs/baseline.md under a "Phase 6 inventory" heading. Do not delete code.
+```
+
+**Verify:**
+```bash
+grep -A30 "Phase 6 inventory" docs/baseline.md
+```
+
+**Expect:** section present with KEEP and CANDIDATE DELETE non-empty or
+explicitly "none".
+
+---
+
+### Task 6.1 — Delete confirmed-dead production helpers
+
+**Goal:** remove modules from Task 6.0's CANDIDATE DELETE list; update
+exports and delete their tests.
+
+**Files:** only paths listed as CANDIDATE DELETE in the inventory (e.g.
+`LegacySyncInterfaceAdapter.py` + its test + `__init__` export if confirmed).
+
+**Prompt:**
+
+```
+For each CANDIDATE DELETE from Task 6.0: confirm again with
+  rg -n 'SymbolName' PiCN/ --glob '*.py'
+that only tests/docs reference it. Then delete the module, remove exports,
+delete dedicated tests. Do not touch SyncRunStrategy / AsyncRunStrategy /
+LayerProcess. Run affected LinkLayer tests.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer -q --timeout=90
+```
+
+**Expect:** pass; deleted symbols have no remaining imports outside docs.
+
+---
+
+### Task 6.2 — DataOffloading: async port or delete
+
+**Goal:** resolve deferred `NFNForwarderData` async (Phase 5.5). Either
+extract-core + `AsyncDataOffloadingChunklayer` and enable
+`runtime=async`, **or** delete DataOffloading / `NFNForwarderData` and
+point callers at `NFNForwarder`.
+
+**Files:** `DataOffloadingChunkLayer*.py`, `NFNForwarderData.py`,
+Simulations that import `NFNForwarderData`, tests.
+
+**Prompt:**
+
+```
+Prefer port if DataOffloading simulations should keep working under async.
+If porting: extract core returning List[Outbound] (ADR-003), add
+AsyncLayerProcess wrapper, wire NFNForwarderData(runtime=ASYNC) like
+NFNForwarder, add async smoke test. If deleting: remove
+NFNForwarderData and update Simulations to NFNForwarder or delete those
+scenarios; remove NotImplementedError path. Document choice in baseline.
+Do not change sync NFNForwarder behaviour.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/ProgramLibs/NFNForwarder -q --timeout=120
+```
+
+**Expect:** pass; either async NFNForwarderData works or class is gone.
+
+---
+
+### Task 6.3 — Playground: port or delete
+
+**Goal:** `PiCN/Playground` must not leave unmanaged MP `LayerProcess`
+demos blocking Phase 6 honesty. Prefer **delete** the Playground package
+(or move out of shipped `PiCN/`) unless a specific demo is required —
+porting all demos is in scope only if deletion is rejected.
+
+**Files:** `PiCN/Playground/**`, packaging / docs that reference Playground.
+
+**Prompt:**
+
+```
+Default recommendation: delete PiCN/Playground (experimental demos) and
+fix docs/CI ignores. Alternative: port each demo to runtime=async
+ProgramLibs patterns (large). Choose one; record in baseline. Do not
+break CI (Playground may already be untested). Afterward:
+  rg -n 'LayerProcess|import multiprocessing' PiCN/Playground/
+must be empty or Playground directory gone.
+```
+
+**Verify:**
+```bash
+test ! -d PiCN/Playground || rg -n 'LayerProcess|import multiprocessing' PiCN/Playground/ --glob '*.py'; echo 'Playground still has MP — fail'; exit 1; fi; echo OK
+```
+
+**Expect:** `OK` (directory gone or no MP/LayerProcess hits).
+
+---
+
+### Task 6.4 — Grep exception list + remaining dead imports
+
+**Goal:** publish the authoritative “allowed multiprocessing” list; remove
+stray unused imports inside modules we touch; do not strip sync path.
+
+**Files:** `docs/baseline.md`, optionally tiny import cleanups in files
+already edited this phase.
+
+**Prompt:**
+
+```
+Add "After Phase 6" / grep exception table to docs/baseline.md covering at
+least: sync ProgramLibs + LayerProcess stack; SimulationBus +
+SimulationInterface queues; ADR-002 configure_start_method; retained sync
+Mgmt; ThreadPoolExecutor (not MP) in AsyncLayerStack. Run greps from
+ADR-004 Phase 6 addendum and record results. Do not delete sync code to
+force empty greps.
+```
+
+**Verify:**
+```bash
+grep -A40 "After Phase 6" docs/baseline.md | head -50
+```
+
+**Expect:** exception table present.
+
+---
+
+### Task 6.5 — Docs: architecture + project_structure
+
+**Goal:** describe dual runtime (sync MP layers vs async tasks) accurately.
+
+**Files:** `docs/architecture.md`, `docs/project_structure.md`.
+
+**Prompt:**
+
+```
+Update architecture.md: layers may run as processes (sync) or asyncio
+tasks (async); ProgramLibs select via runtime=; link/Mgmt differences.
+Update project_structure.md: AsyncLayerProcess, AsyncLayerStack, runtime.py,
+AsyncMgmt, note Playground outcome from 6.3. Do not claim MP is gone.
+```
+
+**Verify:**
+```bash
+grep -n "runtime\|asyncio\|AsyncLayer" docs/architecture.md docs/project_structure.md
+```
+
+**Expect:** both files mention dual/async model.
+
+---
+
+### Task 6.6 — Exit greps + tick criteria
+
+**Goal:** confirm Phase 6 exit criteria; no sync-path regressions.
+
+**Prompt:**
+
+```
+Run LinkLayer + ProgramLibs + Mgmt pytest (ignore Simulations if needed).
+Confirm Task 6.0–6.5 done. Tick Phase 6 exit criteria checkboxes.
+Full scaffolding deletion remains unchecked / deferred in modernization.md.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer PiCN/ProgramLibs PiCN/Mgmt -q --timeout=120 --ignore=PiCN/Simulations
+grep -A20 "Phase 6 exit criteria" docs/agent-tasks.md
+```
+
+**Expect:** suite green aside from known native-code failures; criteria ticked.
+
+---
+
+## Phase 6 exit criteria
+
+Do not start Phase 7 until **all** are true:
+
+- [ ] Dead production helpers from inventory deleted (or inventory said none)
+- [ ] Playground ported or removed (no leftover MP LayerProcess demos)
+- [ ] DataOffloading / NFNForwarderData async resolved (port or delete)
+- [ ] Sync ProgramLibs and Basic* wrappers still work (default sync unchanged
+      unless a later phase flips it)
+- [ ] `docs/baseline.md` lists MP grep exceptions; SimulationBus excepted
+- [ ] `architecture.md` + `project_structure.md` describe dual runtime
+
+**Explicitly deferred (not Phase 6):** delete `_run_*`, `in_unittest`,
+pickling, sync Mgmt, SyncRunStrategy, Manager factory, ADR-002 fork bridge.
+
+---
+
+# Phases 7–8 — expand before use
 
 | Phase | Theme | Governing ADRs | Expand when |
 |---|---|---|---|
-| 6 | Delete the multiprocessing scaffolding | 002, 004 | Phase 5 exits |
 | 7 | Test infrastructure and CI | 010 | Phase 6 exits |
 | 8 | Coverage completion (runs continuously) | 010 | Any time after 7 |
 
 ### Rules that carry forward
 
-- Phase 6 deletes code. Only delete what Phases 2–5 made unreachable —
-  verify with `grep`, not assumption.
+- Later “true” scaffolding deletion needs a phase that retires
+  `runtime=sync` first — do not conflate with this Phase 6.
 - CI (Phase 7) should run the fast checks on every push, and slower
   full-stack tests on pull requests.
 

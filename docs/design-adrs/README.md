@@ -24,6 +24,7 @@ say *why, and what not to do instead*.
 | 3 — I/O boundary | ADR-008 (plus all of Phase 2's) |
 | 4 — Remaining layers | ADR-003 addendum, ADR-009 |
 | 5 — Node assembly | ADR-004 addendum (shared builders), ADR-006 addendum (AsyncMgmt), ADR-009 |
+| 6 — Dead-code cleanup (dual runtime kept) | ADR-004 Phase 6 addendum, ADR-002 (retained), ADR-008 |
 | 7 — Tests and CI | ADR-010 |
 
 ## Index
