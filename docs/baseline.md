@@ -201,7 +201,7 @@ grep -rln "AsyncLayerProcess\|AsyncLayerStack" PiCN/ --include='*.py' | grep -v 
 ```
 
 Returns only the two new files themselves — exactly the Phase 2 exit criterion
-in `docs/agent-tasks.md`.
+in the phase task plan (deleted; see git history).
 
 ### A real bug found and fixed along the way (not a regression — new code)
 
@@ -210,7 +210,7 @@ Task 2.2's original draft nested the two per-direction pump tasks in an
 every child exception in an `ExceptionGroup`, even a single one, which would
 have hidden the real exception type from Task 2.4's stack-level failure
 detection. `AsyncLayerProcess.run()` uses `asyncio.wait(FIRST_EXCEPTION)`
-instead, so a layer's exception propagates unwrapped. `docs/agent-tasks.md`
+instead, so a layer's exception propagates unwrapped. the phase task plan (deleted; see git history)
 and `docs/design-adrs/ADR-010-async-test-strategy.md` were both corrected to
 match (the latter also gained an "Addendum" documenting that
 `@pytest.mark.asyncio` silently no-ops on `unittest.TestCase` methods — caught
@@ -318,7 +318,7 @@ second definition simply shadows the first, and every synchronous caller
 (`SyncRunStrategy`) would silently stop sending anything (an unawaited
 coroutine, never actually run) rather than raising. Caught while implementing
 Task 3.2, before it was ever wired up. Fixed by naming it `send_async`
-instead, matching `register()`'s already-distinct name. `docs/agent-tasks.md`
+instead, matching `register()`'s already-distinct name. the phase task plan (deleted; see git history)
 was corrected in place (Tasks 3.2-3.5 and the Task 3.6 verification prompt)
 rather than left to describe code that was never actually built that way.
 

@@ -46,8 +46,7 @@ class SyncRunStrategy(LinkLayerRunStrategy):
     """Today's behaviour, extracted verbatim from BasicLinkLayer's inherited
     LayerProcess.start_process() -- select()/poll() multiplexing the
     interfaces' file descriptors alongside queue_from_higher, exactly as
-    before this refactor. Zero behavioural change; see Task 3.1's Verify
-    step in docs/agent-tasks.md.
+    before this refactor. Zero behavioural change (ADR-008).
     """
 
     def start(self, layer: "BasicLinkLayer") -> None:

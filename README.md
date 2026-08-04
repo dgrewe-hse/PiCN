@@ -16,11 +16,10 @@ Default behaviour remains **sync** so existing workflows keep working.
 
 | Topic | Doc |
 |---|---|
-| Why / phased plan | [`docs/modernization.md`](docs/modernization.md) |
 | Architecture (layers + dual runtime) | [`docs/architecture.md`](docs/architecture.md) |
 | Package layout | [`docs/project_structure.md`](docs/project_structure.md) |
 | Design decisions (ADRs) | [`docs/design-adrs/`](docs/design-adrs/README.md) |
-| Agent / contributor conventions | [`AGENTS.md`](AGENTS.md) |
+| Contributor conventions | [`AGENTS.md`](AGENTS.md) |
 
 ## Features
 
@@ -155,7 +154,13 @@ excluded from CI (slow / environment-sensitive).
 * [Architecture](docs/architecture.md)
 * [Project Structure](docs/project_structure.md)
 * [Management Interface](docs/management_interface.md)
-* [Modernization plan](docs/modernization.md) · [Baseline / test history](docs/baseline.md)
+* [Design decisions (ADRs)](docs/design-adrs/README.md)
+
+### Migration history
+
+The asyncio/Python 3.14 migration is complete. Its rationale and verification
+record are kept for reference: [plan and current-state audit](docs/modernization.md) ·
+[per-phase test evidence](docs/baseline.md).
 
 ### The project
 

@@ -130,7 +130,42 @@ Expect **empty output** — every construction passes an explicit `maxsize`.
 No silent drops:
 
 ```bash
-grep -rn "put_nowait\|QueueFull" PiCN/ --include=*.py | grep -v test
+grep -rn "put_nowait\|QueueFull" PiCN/ --include='*.py' | grep -v /test
 ```
 
-Expect **empty output**.
+Expect hits **only** in `UDP4Interface.datagram_received` — see the addendum
+below. Anywhere else is a violation.
+
+---
+
+## Addendum (2026-08-04): one sanctioned `put_nowait` — inbound UDP datagrams
+
+Rules 4 and 5 (always `await put`, never catch `QueueFull` and discard) assume
+the producer is inside a coroutine and can suspend. That assumption fails at
+exactly one place, discovered while implementing ADR-008's push model:
+
+**`asyncio`'s datagram protocol callback `datagram_received()` is a plain
+method, not a coroutine.** It cannot `await queue.put(...)`. The alternatives
+were:
+
+| Option | Why rejected / chosen |
+|---|---|
+| `await queue.put(...)` | **Impossible** — not a coroutine context |
+| `asyncio.create_task(queue.put(...))` | Rejected: unbounded task creation under load is a worse failure than a dropped datagram, and orphans tasks (ADR-007) |
+| `put_nowait` + drop on full, **with a warning log** | **Chosen** |
+
+**Why dropping is acceptable here specifically, and nowhere else.** ADR-005
+exists because a silently dropped item on an *inter-layer* queue hides a real
+bug — the sender believed delivery happened. Inbound UDP has no such contract:
+the datagram could equally have been lost in the network. Dropping under
+backpressure is UDP behaving like UDP, not a swallowed error. The bounded queue
+plus the warning still surfaces the pressure.
+
+The drop is **logged at warning level** with the interface id and peer address,
+so it is observable rather than silent — which is the part of rules 4/5 that
+actually matters.
+
+**This exception does not generalise.** It applies to inbound datagram delivery
+from a transport callback. Any *inter-layer* queue, and any producer that is a
+coroutine, remains bound by rules 4 and 5 as written. Cross-referenced from
+ADR-008's 2026-08-04 addendum.

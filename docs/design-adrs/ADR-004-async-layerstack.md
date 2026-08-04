@@ -93,13 +93,33 @@ Stack wiring works and the public API is intact:
 .venv/bin/python -m pytest PiCN/LayerStack -q --timeout=30
 ```
 
-No private queue access remains after Phase 6:
+No private queue access **on the async path**:
 
 ```bash
-grep -rn "_reader" PiCN/ --include=*.py | grep -v test
+grep -rn "_reader" PiCN/ --include='*.py' | grep -v /test
 ```
 
-Expect **empty output**.
+> **Superseded by the 2026-08-04 Phase 6 addendum below — do not expect empty
+> output.** Phase 6 was narrowed and the sync runtime retained, so the three
+> `_run_*` loops that use `Queue._reader` still exist by design.
+
+Expect hits **only** in these three retained sync-path files:
+
+| File | Why retained |
+|---|---|
+| `PiCN/Processes/LayerProcess.py` | sync layer run loops |
+| `PiCN/Layers/LinkLayer/BasicLinkLayer.py` | sync select/poll multiplexing |
+| `PiCN/Layers/LinkLayer/Interfaces/Simulation.py` | `SimulationBus` as an MP process (explicit grep exception) |
+
+A hit in any **`Async*`** module is a real violation — the async path must
+never touch a private queue attribute. Expect empty output from:
+
+```bash
+grep -rn "_reader" PiCN/ --include='Async*.py'
+```
+
+The original "expect empty everywhere" criterion applies only to the later
+phase that removes or flips the sync runtime.
 
 ---
 

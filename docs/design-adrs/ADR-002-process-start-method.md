@@ -5,7 +5,7 @@
   addendum)
 - **Date:** 2026-08-03
 - **Phase:** 1
-- **Relates to:** `agent-tasks.md` Task 1.6
+- **Relates to:** `modernization.md` Phase 1
 
 ## Context
 
@@ -79,9 +79,13 @@ Option A was rejected as effort spent on code scheduled for deletion.
 - Phase 1 restores `ProgramLibs` tests without touching layer internals.
 - The fork-related `DeprecationWarning` will appear in test output. Expected;
   do not suppress it — it is a standing reminder that this is temporary.
-- Windows remains unsupported until asyncio lands, which then improves the
-  situation rather than merely preserving it.
-- **Phase 6 removes this code.**
+- Windows remains unsupported on the **sync** path; the async path supports it
+  natively, so asyncio improves the situation rather than merely preserving it.
+- **Retained, not removed.** The original plan retired this at Phase 6. Phase 6
+  was narrowed and `runtime="sync"` remains supported, so
+  `configure_start_method()` stays for as long as the sync path does. It is
+  removed by the later phase that flips or drops the sync runtime — see
+  ADR-004's 2026-08-04 Phase 6 addendum.
 
 ## Exact semantics of `set_start_method`
 

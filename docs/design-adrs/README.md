@@ -2,9 +2,9 @@
 
 Architecture Decision Records for the Python 3.14 + asyncio migration.
 
-These exist to be read **by implementing agents alongside**
-[`../agent-tasks.md`](../agent-tasks.md). The task plan says *what to do*; these
-say *why, and what not to do instead*.
+These record **why** the asyncio/Python 3.14 migration is shaped the way it
+is, and **what not to do instead**. Read the relevant ones before changing
+async behaviour.
 
 ## How an agent should use these
 

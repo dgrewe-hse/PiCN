@@ -13,7 +13,7 @@ PiCN/Simulations/Streaming/InputFiles/name*
 PiCN/Layers/LinkLayer/Interfaces/Simulation.py
 *~
 
-# Modernization tooling artifacts (docs/agent-tasks.md Task 0.2)
+# tooling artifacts
 .venv/
 .pytest_cache/
 __pycache__/

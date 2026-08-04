@@ -1,7 +1,7 @@
 """Characterization tests for BasicICNLayer.data_from_lower / data_from_higher.
 
 These tests record the CURRENT, observed behaviour of ``BasicICNLayer`` before
-the asyncio migration (see docs/agent-tasks.md Phase 0, Task 0.7 and
+the asyncio migration (see
 docs/design-adrs/ADR-001-baseline-first-migration.md). They intentionally
 describe what the code does today, not what it should do. Once Phase 2 makes
 ``data_from_lower``/``data_from_higher`` coroutines (ADR-003), this file's

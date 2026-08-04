@@ -1,6 +1,6 @@
 name: CI
 
-# Phase 7 (docs/agent-tasks.md): fast checks on every push; full suite on
+# Fast checks on every push; full suite on
 # pull requests / workflow_dispatch. Simulations stay excluded (slow,
 # environment-sensitive — see docs/baseline.md).
 #

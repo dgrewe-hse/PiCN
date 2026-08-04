@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-03
 - **Phase:** 0
-- **Relates to:** `agent-tasks.md` Phase 0, `modernization.md` Phase 0
+- **Relates to:** `modernization.md` Phase 0
 
 ## Context
 

@@ -85,6 +85,34 @@ No `terminate()`. No `sleep()` as a synchronisation device.
        await self._cleanup()
        raise          # <- mandatory
    ```
+   **Exception — awaiting a task you just cancelled yourself.** Rule 2 is about
+   a layer swallowing cancellation *of its own run loop*. It does **not** apply
+   when you cancel a child task you own and then await it to confirm it
+   stopped:
+
+   ```python
+   async def stop(self, timeout: float = None) -> None:
+       if self._ageing_task is not None:
+           self._ageing_task.cancel()
+           try:
+               await self._ageing_task
+           except asyncio.CancelledError:
+               pass          # <- correct: we requested this cancellation
+           self._ageing_task = None
+       await super().stop(timeout=timeout)
+   ```
+
+   Re-raising here would propagate a cancellation **nobody asked `stop()` for**,
+   turning an orderly teardown into a spurious `CancelledError` in the caller.
+   The distinguishing question is *who requested the cancellation*: if it came
+   from outside (your run loop was cancelled) you must re-raise; if you issued
+   it yourself on a task you own, swallow it.
+
+   All current `except asyncio.CancelledError: pass` sites in the codebase are
+   this second case — verified 2026-08-04 across `AsyncBasicICNLayer`,
+   `AsyncBasicRoutingLayer`, `AsyncBasicTimeoutPreventionLayer`,
+   `AsyncAutoconfigRepoLayer`, and `AsyncAutoconfigClientLayer` (×2). Do not
+   "fix" them.
 3. Release resources in `finally`, not after the loop — cancellation may unwind
    before the loop's normal exit.
 4. `stop()` on a layer that never started must be a **no-op**, not an error.
@@ -102,13 +130,21 @@ grep -rn "terminate()\|time.sleep" PiCN/Processes/ PiCN/LayerStack/ --include=*.
 
 Expect **empty output**.
 
-No layer swallows cancellation — every `except CancelledError` must re-raise:
+No layer swallows cancellation **of its own run loop**:
 
 ```bash
-grep -rn -A3 "except asyncio.CancelledError" PiCN/ --include=*.py | grep -v test
+grep -rn -B4 -A3 "except asyncio.CancelledError" PiCN/ --include='*.py' | grep -v /test
 ```
 
-Inspect each: every block must contain `raise`.
+Classify each hit using rule 2's exception:
+
+- Preceded by a self-issued `<task>.cancel()` then `await <task>` →
+  **correct as `pass`**.
+- Anywhere else, notably inside `run()` → **must contain `raise`**.
+
+A `pass` with no preceding self-issued `cancel()` is the violation this ADR
+exists to catch. A bare `grep ... | grep raise` cannot make this distinction —
+the preceding lines are what decide it.
 
 ## Addendum (2026-08-04): the timeout branch must log, not just `pass`
 

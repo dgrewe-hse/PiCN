@@ -168,13 +168,40 @@ exemption: `class test_Foo` silently collects **zero** tests, no error, no
 warning, just `collected 0 items`. Prefer module-level `test_*` functions to
 sidestep this entirely if a shared setup fixture is not needed.
 
-**Added verification** — no async test is defined on a `unittest.TestCase`:
+**Added verification** — no async test is defined on a `unittest.TestCase`.
+
+A file-level `grep` **cannot** check this and must not be used. It produces
+false positives on two legitimate patterns:
+
+1. the explanatory comment this addendum *requires* at the top of such files,
+   which mentions `unittest.TestCase` by name; and
+2. a file that correctly holds a sync test in a `TestCase` class **and** an
+   async test in a separate bare class — which is exactly the shape a
+   sync/async parity test should have (see
+   `PiCN/LayerStack/test/test_stack_parity.py`).
+
+The check needs class scope, so use the AST:
 
 ```bash
-grep -rlZ "unittest.TestCase" PiCN/ --include=test_*.py | xargs -0 grep -l "pytest.mark.asyncio" 2>/dev/null
+python - <<'PY'
+import ast, pathlib, sys
+bad = []
+for p in pathlib.Path("PiCN").rglob("test_*.py"):
+    tree = ast.parse(p.read_text(encoding="utf-8"))
+    for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        if not any("TestCase" in ast.unparse(b) for b in cls.bases):
+            continue
+        for fn in cls.body:
+            if isinstance(fn, ast.AsyncFunctionDef) and fn.name.startswith("test"):
+                bad.append(f"{p}::{cls.name}::{fn.name}")
+print("\n".join(bad) if bad else "OK - no async test on a TestCase subclass")
+sys.exit(1 if bad else 0)
+PY
 ```
 
-Expect **empty output**. (`IsolatedAsyncioTestCase` was considered as an
+Expect `OK`. Any listed test is silently no-opping: `unittest` calls the
+coroutine function, discards the returned coroutine, and reports **passed**
+without ever running the body. (`IsolatedAsyncioTestCase` was considered as an
 alternative fix — it does run async `unittest.TestCase` methods natively — but
 rejected here because it would mean two different, mutually exclusive async
 test mechanisms in one suite depending on base class, which is precisely the
