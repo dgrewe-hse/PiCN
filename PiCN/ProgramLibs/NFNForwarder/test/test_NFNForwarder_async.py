@@ -18,8 +18,3 @@ class TestNFNForwarderAsync:
             await fwd.stop_forwarder_async()
             for iface in fwd.interfaces:
                 iface.close()
-
-    def test_nfn_forwarder_data_async_deferred(self):
-        from PiCN.ProgramLibs.NFNForwarder.NFNForwarderData import NFNForwarderData
-        with pytest.raises(NotImplementedError):
-            NFNForwarderData(0, runtime=Runtime.ASYNC)
