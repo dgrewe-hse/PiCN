@@ -27,15 +27,9 @@ class TestSimulationInterfaceAsync:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     def teardown_method(self):
-        # register()'s background pump calls the blocking receive("relay"),
-        # which blocks forever on an empty queue_from_bus with no timeout.
-        # Cancelling the asyncio task (its event loop may already be closed
-        # by the time this sync teardown runs) would not interrupt that
-        # executor thread anyway -- ADR-009 is explicit that cancellation
-        # never stops a thread mid-flight, the same property
-        # test_LegacySyncInterfaceAdapter.py's fake had to account for.
-        # Pushing one dummy item unblocks it so shutdown(wait=True) below
-        # does not hang.
+        # register()'s background pump blocks on queue_from_bus.get().
+        # Push a dummy item so executor.shutdown(wait=True) does not hang
+        # (ADR-009: cancellation does not stop a worker mid-flight).
         self.interface.queue_from_bus.put(["teardown", b""])
         self.executor.shutdown(wait=True)
         self.interface.close()
