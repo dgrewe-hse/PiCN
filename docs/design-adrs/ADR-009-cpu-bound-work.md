@@ -193,3 +193,38 @@ grep -rn "run_in_executor" PiCN/ --include=*.py | grep -v test
 
 Inspect each call: the function must not be a bound method of a layer, and `self`
 must not appear in the arguments.
+
+## Addendum (2026-08-04): a temporary, narrowly-scoped exception for Phase 3
+
+Rule 3 above ("`LayerStack` owns exactly one executor") presumes a
+`LayerStack` already exists to own it. During Phase 3
+([ADR-008](ADR-008-baseinterface-contract.md)'s addendum), `BasicLinkLayer`'s
+`AsyncRunStrategy` runs standalone inside its own forked process, wired into
+the *old*, still-multiprocessing `LayerStack` -- there is no `AsyncLayerStack`
+yet to own anything. Something still has to bridge the legacy
+`multiprocessing.Queue` `from_higher` into the async engine without blocking
+the event loop, which needs exactly the mechanism this ADR governs
+(`loop.run_in_executor`).
+
+**Exception: `AsyncRunStrategy` owns exactly one executor, for exactly this
+bridge, for exactly as long as the layer runs under a transitional strategy
+rather than a real `AsyncLayerStack`.**
+
+- Not `BasicLinkLayer` itself -- the strategy object, so ownership moves
+  cleanly with whichever run strategy is active.
+- Not per-call, not per-interface. One executor, one purpose: draining
+  `from_higher.get()` off the event loop.
+- The function dispatched to it must still be pure per rule 5 above -- take
+  the queue, return the item, touch nothing else.
+- Startup/shutdown ordering still follows this ADR's ordering rules, just
+  scoped to the strategy's own lifecycle instead of `LayerStack`'s: create the
+  executor when the strategy starts, cancel the engine's tasks, await them,
+  **then** `executor.shutdown(wait=True)`.
+
+**This is deleted, not migrated, in Phase 5.** Once a ProgramLib's
+`BasicLinkLayer` is wired into a real `AsyncLayerStack`, `from_higher` is a
+real `asyncio.Queue` and the bridge -- and the executor it needed -- has
+nothing left to do. The layer then receives `AsyncLayerStack`'s executor by
+injection like every other layer, per rule 3, with no code path of its own
+still creating one. Verify at that point with the original check above,
+scoped to confirm `AsyncRunStrategy` is no longer among the hits.

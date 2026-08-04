@@ -199,3 +199,97 @@ Two nodes exchange real packets — the Phase 3 exit criterion:
 ```bash
 .venv/bin/python -m pytest PiCN/Layers/LinkLayer PiCN/ProgramLibs/ICNForwarder -q --timeout=90
 ```
+
+## Addendum (2026-08-04): a transitional run strategy, not a flag-day cutover
+
+Found while planning Phase 3's actual task breakdown: this ADR's exit criterion
+requires `PiCN/ProgramLibs/ICNForwarder`'s existing tests to keep passing, but
+its own "Rules for implementers" describe changing `send()` to `async def` on
+the contract every `BasicLinkLayer` caller uses *today*, synchronously, inside
+a plain `multiprocessing.Process`. Taken literally and applied in place, that
+silently breaks every synchronous caller (an unawaited coroutine is simply
+never sent) rather than raising — the exact kind of regression Phase 0-2's
+discipline exists to catch before it ships.
+
+**The mechanical fact that resolves this:** every `LayerProcess`, including
+`BasicLinkLayer`, already runs in its own dedicated, forked OS process
+(`LayerProcess.start_process()`: `multiprocessing.Process(target=self._run,
+...)`). Nothing outside that process — `LayerStack`, `ICNForwarder`, sibling
+layers — can observe what happens inside it. That is the same isolation
+Phase 2 used to be purely additive; Phase 3 gets it for free from the
+multiprocessing architecture instead of from separate files.
+
+**Decision: `BasicLinkLayer` takes an injected `run_strategy`, defaulting to
+today's unchanged behaviour.**
+
+```python
+class LinkLayerRunStrategy(abc.ABC):
+    """How BasicLinkLayer's process actually runs. Injected, not hardcoded,
+    so migration is opt-in per ProgramLib rather than a flag-day cutover."""
+    @abc.abstractmethod
+    def start(self, layer: "BasicLinkLayer") -> None: ...
+
+class SyncRunStrategy(LinkLayerRunStrategy):
+    """Today's _run_poll/_run_select/_run_sleep dispatch. Byte-for-byte
+    unchanged. The default -- no ProgramLib has to opt in to get nothing
+    different."""
+
+class AsyncRunStrategy(LinkLayerRunStrategy):
+    """asyncio.run() driving a composed AsyncLayerProcess engine (reused
+    from Phase 2, not duplicated) inside BasicLinkLayer's own process.
+    UDP4Interface.register()/async send feed and drain it; a small executor
+    (see ADR-009's addendum) bridges the still-multiprocessing.Queue
+    from_higher, since LayerStack does not create asyncio.Queues until
+    Phase 5."""
+```
+
+`BasicLinkLayer.start_process()` becomes `self._run_strategy.start(self)`.
+Every existing ProgramLib gets `SyncRunStrategy` by default and is completely
+unaffected. A ProgramLib opts into `AsyncRunStrategy` explicitly, one at a
+time (Phase 5's "simplest first" framing applies to *ProgramLibs*, not only
+layers) -- this is the mechanism that makes that gradual rollout possible
+instead of requiring every ProgramLib to move in one commit.
+
+**Consequence for `file_descriptor`:** the "Rules for implementers" #4 above
+describes it becoming a raising stub. That is still correct as `BaseInterface`'s
+*default* -- a brand-new third-party interface implementing only the async
+contract should fail loudly if something still expects a file descriptor from
+it. But `UDP4Interface` and `SimulationInterface` are NOT becoming
+async-only: they keep supporting `SyncRunStrategy`, so their own
+`file_descriptor` overrides keep returning the real socket / real
+`multiprocessing.Queue` reader, completely unchanged, for as long as
+`SyncRunStrategy` exists. **The verification command changes accordingly:**
+
+```bash
+grep -rln "def file_descriptor" PiCN/Layers/LinkLayer/ --include=*.py
+```
+
+Expect hits in exactly three places: `BaseInterface` (the raising default),
+`UDP4Interface`, and `SimulationInterface` (both real, unchanged overrides).
+The important check is not the hit *count* but that **`AsyncRunStrategy` and
+its interface calls never appear in this grep** -- the new async path must
+never touch `file_descriptor`, regardless of how many places still define it
+for the sync path's sake. Grep for that directly:
+
+```bash
+grep -n "file_descriptor" PiCN/Layers/LinkLayer/AsyncRunStrategy.py 2>&1
+```
+
+Expect: file not found, or empty -- there is no legitimate reason for the new
+file to mention it at all.
+
+**Consequence for the interface classes' shape:** `UDP4Interface` and
+`SimulationInterface` each carry *both* method surfaces on the same class --
+today's `send()`/`receive()`/`file_descriptor` (used by `SyncRunStrategy`,
+untouched) and the new `async def register(...)`/`async def send(...)` (used
+by `AsyncRunStrategy`) -- rather than a parallel class per ADR-004's
+Phase-2-style duplication. This is deliberate: unlike Phase 2, there is
+exactly one production `UDP4Interface` today, actively depended on by every
+ProgramLib, and duplicating it would be more confusing than a wider single
+class, not less.
+
+**Phase 6 still deletes.** Once every ProgramLib has moved to
+`AsyncRunStrategy` (Phase 5) and `LayerStack`/`LayerProcess` are removed
+(Phase 6), `SyncRunStrategy` and the old sync methods on the interfaces are
+exactly the kind of now-unreachable code Phase 6 exists to delete -- verify
+with `grep`, per `AGENTS.md`, not assumption.

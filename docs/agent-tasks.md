@@ -16,7 +16,7 @@ a verification command.
 | 0 | ADR-001 |
 | 1 | ADR-002 |
 | 2 | ADR-003, ADR-004, ADR-005, ADR-006, ADR-007, ADR-010 |
-| 3 | ADR-008 |
+| 3 | ADR-008 (and its 2026-08-04 addendum), ADR-009 (and its 2026-08-04 addendum) |
 | 4 | ADR-009 |
 
 ---
@@ -1136,7 +1136,545 @@ Do not start Phase 3 until **all** are true:
 
 ---
 
-# Phases 3–7 — expand before use
+# Phase 3 — I/O boundary: `BaseInterface`, `UDP4Interface`, `BasicLinkLayer`
+
+**Purpose:** move the network I/O boundary onto asyncio-native primitives —
+`loop.create_datagram_endpoint` instead of blocking sockets, pushed queues
+instead of `select()`/`file_descriptor` multiplexing — without a flag-day
+cutover of every `ProgramLib` that depends on `BasicLinkLayer` today.
+
+**Unlike Phase 2, this is not purely additive.** `BasicLinkLayer` is
+production code every `ProgramLib` already uses. Phase 3 solves that with an
+*injected run strategy* rather than a parallel class hierarchy — see
+[ADR-008](design-adrs/ADR-008-baseinterface-contract.md)'s 2026-08-04
+addendum for the full reasoning. In one sentence: every `LayerProcess`
+already runs in its own forked OS process, so the new asyncio engine can live
+entirely inside `BasicLinkLayer`'s process without anything outside it (the
+old `LayerStack`, `ICNForwarder`, sibling layers) changing shape — as long as
+`BasicLinkLayer` still defaults to today's exact behaviour until a
+`ProgramLib` explicitly opts in.
+
+**Do not touch `LayerStack.py`, `LayerProcess.py`, `FaceIDTable/`, or
+`AddressInfo`.** Their contracts are unaffected (ADR-008 rule 8) and Phase 3
+does not depend on Phase 5's node-assembly work.
+
+---
+
+> **Read first:** [ADR-008](design-adrs/ADR-008-baseinterface-contract.md)
+> (including its 2026-08-04 addendum — the *original* ADR text describes an
+> in-place breaking change; the addendum is what actually governs this phase)
+> and [ADR-009](design-adrs/ADR-009-cpu-bound-work.md)'s 2026-08-04 addendum
+> (the temporary, narrowly-scoped executor exception this phase needs before
+> a real `AsyncLayerStack` exists to own one properly).
+
+### Task 3.1 — `LinkLayerRunStrategy` seam: extract, do not rewrite
+
+**Goal:** give `BasicLinkLayer` an injected run strategy with **zero**
+behavioural change — prove the seam itself is safe before anything new is
+built on it.
+
+**Files:** creates `PiCN/Layers/LinkLayer/RunStrategy.py`. Modifies
+`PiCN/Layers/LinkLayer/BasicLinkLayer.py` only to delegate to it.
+
+**Prompt:**
+
+```
+Read PiCN/Layers/LinkLayer/BasicLinkLayer.py in full, and ADR-008's
+2026-08-04 addendum in full, before starting.
+
+Create PiCN/Layers/LinkLayer/RunStrategy.py containing:
+
+1. class LinkLayerRunStrategy(abc.ABC): one abstract method,
+     def start(self, layer: "BasicLinkLayer") -> None
+   Do not add a stop() yet -- Task 3.1 does not change stop_process().
+
+2. class SyncRunStrategy(LinkLayerRunStrategy): start() does EXACTLY what
+   BasicLinkLayer.start_process() does today:
+     layer.process = multiprocessing.Process(target=layer._run, args=[
+         layer._queue_from_lower, layer._queue_from_higher,
+         layer._queue_to_lower, layer._queue_to_higher])
+     layer.process.daemon = True
+     layer.process.start()
+   Copy this verbatim from the current start_process() body. Do not
+   simplify, rename variables, or "clean up" anything -- this is a pure
+   extraction.
+
+In BasicLinkLayer.py:
+- Add run_strategy: LinkLayerRunStrategy = None as a constructor parameter,
+  defaulting to SyncRunStrategy() when None is passed (so every existing
+  caller -- every ProgramLib -- is completely unaffected without changing a
+  single call site).
+- Store it as self._run_strategy.
+- Replace start_process()'s body with: self._run_strategy.start(self)
+- Do NOT change stop_process(), _run, _run_poll, _run_select, _run_sleep,
+  data_from_lower, data_from_higher, or __del__. This task changes exactly
+  one thing: who decides what start_process() does.
+
+Do not modify any test file. Do not modify UDP4Interface.py, Simulation.py,
+LayerStack.py, or LayerProcess.py.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer PiCN/ProgramLibs/ICNForwarder -q --timeout=90
+```
+
+**Expect:** identical pass count to the pre-Phase-3 baseline. This is a
+refactor with a stated goal of zero behavioural change — any difference,
+including a *new* pass, is a bug in the extraction, not a bonus.
+
+---
+
+### Task 3.2 — `UDP4Interface`: add the async contract alongside the sync one
+
+**Goal:** `UDP4Interface` gains `register()`/`async send()` per ADR-008,
+without removing or changing `send()`/`receive()`/`file_descriptor` — both
+surfaces coexist on the same class (ADR-008 addendum: no parallel class).
+Not wired into `BasicLinkLayer` yet; tested standalone.
+
+**Files:** `PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py`, creates
+`PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface_async.py`.
+
+**Prompt:**
+
+```
+Read PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py, ADR-008 in full
+(including the addendum), and PiCN/Processes/AsyncLayerProcess.py (for
+docstring/style consistency) before starting.
+
+In UDP4Interface.py, ADD (do not remove or modify any existing method):
+
+1. async def register(self, queue: asyncio.Queue, interface_id: int) -> None:
+   - Must be called from within a running event loop.
+   - Uses loop.create_datagram_endpoint(..., sock=self.sock) against the
+     ALREADY-BOUND socket created in __init__ -- do not create a new socket
+     or rebind.
+   - The protocol's datagram_received(data, addr) callback pushes
+     (data, addr, interface_id) onto queue. Use queue.put_nowait(...) inside
+     a try/except asyncio.QueueFull that DROPS the datagram and logs a
+     warning naming the interface_id -- documented as UDP-specific
+     (ADR-008 addendum's backpressure decision): UDP already has no delivery
+     guarantee, so a drop under backpressure is not the same "hides a bug"
+     concern ADR-005 exists to prevent for inter-layer queues. Do NOT use
+     await queue.put(...) here -- datagram_received() is a plain callback,
+     not a coroutine, and cannot await (this is a deliberate, narrow
+     exception to ADR-005 rule 4, not a mistake -- say so in a comment).
+   - Store the transport for send() and close() to use.
+
+2. async def send(self, data, addr) -> None:
+   - Wraps self._transport.sendto(data, addr). Must only be usable after
+     register() has been called; raise a clear RuntimeError otherwise (do
+     not silently no-op).
+   - Do NOT touch self.sock directly, and do NOT call socket.sendto -- use
+     only the transport from register().
+
+Leave send(), receive(), file_descriptor, get_port(), close(),
+enable_broadcast(), get_broadcast_address(), __eq__ completely unchanged.
+
+Create PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface_async.py,
+a plain pytest module (NOT unittest.TestCase -- see ADR-010's Addendum) with
+@pytest.mark.asyncio tests covering:
+- register() followed by send(): another real UDP socket receives the data.
+- A real UDP packet sent to the interface's port arrives on the queue as
+  (data, addr, interface_id) with the interface_id given to register().
+- send() before register() raises RuntimeError, does not hang, does not
+  silently drop.
+- A queue passed with maxsize=1: filling it and then triggering a second
+  datagram_received() does not raise out of the protocol callback and does
+  not block the event loop -- assert the second item was dropped (queue
+  still contains only the first), not silently blocked or crashed.
+
+Do not modify test_UDP4Interface.py -- it characterizes the sync contract
+and must keep passing unchanged.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface_async.py PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface.py -v --timeout=30
+```
+
+**Expect:** all tests in both files pass. The old file's tests passing
+unchanged is the important signal — the sync contract was not disturbed.
+
+---
+
+### Task 3.3 — `AsyncRunStrategy`: the composed engine
+
+**Goal:** `BasicLinkLayer` can now be constructed with
+`run_strategy=AsyncRunStrategy()` and behaves identically from the outside
+(same queues, same `start_process()`/`stop_process()`) while running a real
+asyncio engine internally.
+
+**Files:** `PiCN/Layers/LinkLayer/RunStrategy.py`,
+`PiCN/Layers/LinkLayer/BasicLinkLayer.py` (stop_process() only), creates
+`PiCN/Layers/LinkLayer/test/test_BasicLinkLayer_async.py`.
+
+**Prompt:**
+
+```
+Read ADR-008's addendum and ADR-009's addendum in full before starting --
+both govern this task's exact shape. Read PiCN/Processes/AsyncLayerProcess.py
+again; you are REUSING it, not reimplementing its pump/cancellation logic.
+
+In RunStrategy.py, add class AsyncRunStrategy(LinkLayerRunStrategy):
+
+- __init__: creates nothing yet (ADR-009: create the executor at start(),
+  not at construction).
+- start(self, layer: "BasicLinkLayer") -> None: sets
+    layer.process = multiprocessing.Process(target=self._entrypoint, args=[layer])
+    layer.process.daemon = True
+    layer.process.start()
+  where _entrypoint(self, layer) runs INSIDE the forked child and does
+  asyncio.run(self._async_main(layer)).
+- async def _async_main(self, layer) -> None:
+  1. Create self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+     -- exactly one, exactly here (ADR-009 addendum).
+  2. Create an internal engine: a small concrete subclass of
+     PiCN.Processes.AsyncLayerProcess.AsyncLayerProcess whose
+     data_from_lower(to_lower, to_higher, data) and
+     data_from_higher(to_lower, to_higher, data) reproduce
+     BasicLinkLayer.data_from_lower/data_from_higher's EXISTING logic
+     (faceidtable lookup, interface selection) but async and awaiting
+     interface.send(...) instead of calling it synchronously. Do not
+     duplicate the faceidtable/AddressInfo logic by copy-paste without
+     understanding it -- read BasicLinkLayer.data_from_lower/data_from_higher
+     first and preserve their behaviour exactly, including the existing
+     error handling and logging.
+  3. Set the engine's queue_from_lower to a fresh asyncio.Queue(maxsize=...)
+     (reuse AsyncLayerStack's DEFAULT_QUEUE_SIZE constant, imported, not
+     re-defined) and call await interface.register(queue_from_lower,
+     interface_id=index) for every interface in layer.interfaces, in order
+     (ADR-008: interface_id is the positional index, assigned here, never
+     derived any other way).
+  4. Set the engine's queue_from_higher to a second fresh asyncio.Queue, and
+     start a background bridge task:
+       async def _bridge_from_higher():
+           loop = asyncio.get_running_loop()
+           while True:
+               item = await loop.run_in_executor(self._executor, layer._queue_from_higher.get)
+               await engine.queue_from_higher.put(item)
+     The dispatched function (layer._queue_from_higher.get) takes no
+     arguments and returns the item -- pure per ADR-009 rule 5. layer itself
+     is never touched inside the executor thread; only its already-existing
+     multiprocessing.Queue object's .get is called, which is safe to call
+     from any thread.
+  5. await engine.run() -- this IS Phase 2's run loop, unmodified, servicing
+     both queues concurrently.
+  6. On CancelledError (this task itself was cancelled -- see stop() below),
+     cancel the bridge task, await it, shut down self._executor with
+     wait=True (ADR-009: after tasks stop, never before), then re-raise.
+
+In BasicLinkLayer.py, stop_process() must still work for BOTH strategies
+without knowing which one is active: it already just does
+self.process.terminate() plus queue closing, which works identically whether
+the child process is running the old select() loop or asyncio.run() -- a
+terminated process's event loop simply stops existing. Do NOT special-case
+stop_process() per strategy; if you find yourself wanting to, that means the
+strategies are not sufficiently self-contained -- stop and report instead of
+forcing it.
+
+Create PiCN/Layers/LinkLayer/test/test_BasicLinkLayer_async.py (plain pytest,
+not unittest.TestCase) covering, using AsyncRunStrategy() explicitly:
+- A single node: a real UDP packet sent to the interface's port arrives on
+  queue_to_higher with the correct faceid, mirroring
+  test_BasicLinkLayer.py::test_receiving_a_packet exactly (same assertions,
+  new strategy).
+- The reverse: pushing [faceid, data] onto queue_from_higher results in a
+  real UDP packet arriving at the expected address, mirroring
+  test_sending_a_packet.
+- Two BasicLinkLayer instances, both AsyncRunStrategy, exchanging a packet
+  each direction, mirroring test_sending_and_receiving_a_packet -- this is
+  ADR-008's literal "two nodes exchange real packets" criterion, for the new
+  path specifically.
+
+Do not modify test_BasicLinkLayer.py -- it characterizes SyncRunStrategy
+(the default) and must keep passing unchanged.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer -v --timeout=90 && grep -rn "recvfrom\|sendto\|select\." PiCN/Layers/LinkLayer/RunStrategy.py
+```
+
+**Expect:** all tests pass (old sync tests AND new async ones), and the grep
+for blocking socket calls inside the new strategy file returns **empty**.
+
+---
+
+### Task 3.4 — `LegacySyncInterfaceAdapter`
+
+**Goal:** a third party's un-migrated, blocking `BaseInterface`
+implementation can still be used under `AsyncRunStrategy`, per ADR-008's
+"Migration path for third-party implementations".
+
+**Files:** creates
+`PiCN/Layers/LinkLayer/Interfaces/LegacySyncInterfaceAdapter.py` and its test.
+
+**Prompt:**
+
+```
+Read ADR-008's "Migration path for third-party implementations" section in
+full before starting.
+
+Create PiCN/Layers/LinkLayer/Interfaces/LegacySyncInterfaceAdapter.py:
+
+class LegacySyncInterfaceAdapter(BaseInterface):
+    """Wraps an old-style BaseInterface (blocking receive(), synchronous
+    send()) so it can be driven by AsyncRunStrategy. DEPRECATED on
+    introduction -- this is a migration aid, not a supported long-term path
+    (ADR-008)."""
+
+    def __init__(self, wrapped: BaseInterface, executor: concurrent.futures.Executor):
+        self._wrapped = wrapped
+        self._executor = executor  # INJECTED, never created here -- ADR-009 rule 3/addendum
+
+    async def register(self, queue: asyncio.Queue, interface_id: int) -> None:
+        # Starts a background task that loops:
+        #   data, addr = await loop.run_in_executor(self._executor, self._wrapped.receive)
+        #   await queue.put((data, addr, interface_id))
+        # This one CAN use await queue.put() (unlike UDP4Interface's
+        # datagram_received) because it runs as a real task, not a
+        # callback -- do not use put_nowait here, there is no callback
+        # constraint forcing that exception in this file.
+
+    async def send(self, data, addr) -> None:
+        # await loop.run_in_executor(self._executor, self._wrapped.send, data, addr)
+
+    @property
+    def file_descriptor(self):
+        raise NotImplementedError(
+            "file_descriptor was removed for interfaces driven by "
+            "AsyncRunStrategy; see docs/design-adrs/ADR-008-baseinterface-contract.md"
+        )
+
+Add a module or class-level DeprecationWarning raised on __init__ (via
+warnings.warn), not just a docstring -- ADR-008 says "mark it deprecated on
+introduction", which should be enforceable, not just documented.
+
+Create the matching test file covering: send()/receive() round-trip through
+the adapter using a simple in-memory fake BaseInterface (do not require a
+real socket), and that constructing it emits a DeprecationWarning
+(pytest.warns).
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer/Interfaces/test/test_LegacySyncInterfaceAdapter.py -v --timeout=30
+```
+
+**Expect:** all tests pass, including the `DeprecationWarning` assertion.
+
+---
+
+### Task 3.5 — `SimulationInterface`: the async contract
+
+**Goal:** per ADR-008 rule 7 ("port one interface at a time... UDP4Interface
+first, then the simulation interface"), `SimulationInterface` gains the same
+`register()`/`async send()` surface UDP4Interface got in Task 3.2, reusing
+the same executor-bridge pattern for its already-multiprocessing-based
+`queue_from_bus`. `SimulationBus` itself is unchanged — it still dispatches
+via its own `multiprocessing.Queue`-based process; only the per-node
+`SimulationInterface` gains an async face.
+
+**Files:** `PiCN/Layers/LinkLayer/Interfaces/Simulation.py`, creates
+`PiCN/Layers/LinkLayer/Interfaces/test/test_Simulation_async.py`.
+
+**Prompt:**
+
+```
+Read PiCN/Layers/LinkLayer/Interfaces/Simulation.py in full, and Task 3.2's
+completed UDP4Interface changes, before starting -- this task mirrors that
+one's shape, adapted to SimulationInterface's existing
+queue_from_bus/queue_from_linklayer multiprocessing.Queue pair instead of a
+socket.
+
+In Simulation.py's SimulationInterface class, ADD (do not remove or modify
+send(), receive(), file_descriptor, address(), close()):
+
+1. async def register(self, queue: asyncio.Queue, interface_id: int,
+   executor: concurrent.futures.Executor) -> None:
+   - executor is INJECTED (ADR-009 rule 3/addendum) -- SimulationInterface
+     must not create its own.
+   - Starts a background task bridging self.queue_from_bus (a
+     multiprocessing.Queue, fed by SimulationBus, exactly as today) into the
+     given asyncio.Queue, using the same
+     "await loop.run_in_executor(executor, self.queue_from_bus.get)" pattern
+     as AsyncRunStrategy's from_higher bridge in Task 3.3. Push
+     (packet, addr, interface_id) -- note receive("relay") already unpacks
+     this shape; reuse that logic rather than re-deriving it.
+   - Store the bridge task so it can be cancelled on close/teardown.
+
+2. async def send(self, data, addr) -> None:
+   - Wraps self.queue_from_linklayer.put([addr, data]) -- the existing
+     send(..., src="relay") body. multiprocessing.Queue.put() on this
+     already-unbounded queue does not block in practice, but dispatch it
+     through loop.run_in_executor(executor, ...) anyway for correctness
+     rather than assuming -- do not call it directly from the event loop.
+     This needs the same injected executor as register(); store it from
+     register() rather than taking it again here.
+
+Create PiCN/Layers/LinkLayer/Interfaces/test/test_Simulation_async.py (plain
+pytest, not unittest.TestCase) covering:
+- register() + a manual queue_from_bus.put(...) (simulating what SimulationBus
+  would do): the item arrives on the given asyncio.Queue as
+  (packet, addr, interface_id).
+- send(): the data appears on queue_from_linklayer, matching what
+  SimulationBus's receive("bus") side expects today.
+
+Do not modify test_Simulation.py -- it characterizes the sync contract via
+SimulationBus's existing dispatch loop and must keep passing unchanged. Do
+not modify SimulationBus.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer/Interfaces/test/test_Simulation_async.py PiCN/Layers/LinkLayer/Interfaces/test/test_Simulation.py -v --timeout=60
+```
+
+**Expect:** all tests in both files pass.
+
+---
+
+### Task 3.6 — Verification sweep and baseline update
+
+**Goal:** confirm every ADR-008/009 rule this phase touches holds, and that
+nothing outside the new files changed behaviour.
+
+**Files:** updates `docs/baseline.md` only. No source changes.
+
+**Prompt:**
+
+```
+Run each of these and record the output:
+
+  grep -rn "recvfrom\|sendto\|select\." PiCN/Layers/LinkLayer/RunStrategy.py PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py PiCN/Layers/LinkLayer/Interfaces/Simulation.py PiCN/Layers/LinkLayer/Interfaces/LegacySyncInterfaceAdapter.py
+  grep -rln "def file_descriptor" PiCN/Layers/LinkLayer/ --include=*.py
+  grep -n "file_descriptor" PiCN/Layers/LinkLayer/RunStrategy.py
+  grep -rn "put_nowait" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
+  grep -rn "ThreadPoolExecutor\|ProcessPoolExecutor" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
+  grep -rn "id(self)\|uuid" PiCN/Layers/LinkLayer/ --include=*.py | grep -v test
+
+Expected results, per ADR-008's addendum and ADR-009's addendum:
+- First: empty (no blocking socket calls anywhere in the new async code).
+- Second: exactly BaseInterface.py, UDP4Interface.py, Simulation.py (three
+  files define file_descriptor -- this is EXPECTED, not a violation; see the
+  ADR-008 addendum for why the "exactly one hit" language in the original
+  ADR text does not apply once SyncRunStrategy is kept alive).
+- Third: empty (the new async run strategy never touches file_descriptor).
+- Fourth: exactly one hit, inside UDP4Interface.py's datagram_received
+  callback, with a comment explaining why (the ADR-005 exception for a
+  non-coroutine callback).
+- Fifth: hits only inside RunStrategy.py (AsyncRunStrategy) -- exactly one
+  executor construction, matching ADR-009's addendum. Any hit inside
+  UDP4Interface.py, Simulation.py, or LegacySyncInterfaceAdapter.py is a
+  violation -- those receive an executor by injection, they must never
+  create one.
+- Sixth: empty -- interface_id always comes from register()'s parameter,
+  never invented.
+
+Then run the full suite:
+  python -m pytest -v --timeout=90 -p no:cacheprovider > /tmp/phase3-run.txt 2>&1
+  tail -5 /tmp/phase3-run.txt
+
+Compare against the "After Phase 2" counts in docs/baseline.md. Every
+previously-passing test must still pass. New tests from Tasks 3.1-3.5 add
+passes; nothing else should change. Any other change is a regression --
+report it, do not fix it in this task.
+
+Add a new section to docs/baseline.md titled "After Phase 3" with the six
+grep results, the new counts and delta, and explicit confirmation that
+SyncRunStrategy-driven BasicLinkLayer (i.e. every existing ProgramLib) is
+byte-for-byte unaffected.
+```
+
+**Verify:**
+```bash
+grep -A15 "After Phase 3" docs/baseline.md
+```
+
+**Expect:** the new section, all six grep checks matching their expected
+shape above, and no regressions versus "After Phase 2".
+
+---
+
+### Task 3.7 — Commit Phase 3
+
+**Goal:** land the I/O boundary work as a single, reviewable commit.
+
+**Files:** `PiCN/Layers/LinkLayer/RunStrategy.py`,
+`PiCN/Layers/LinkLayer/BasicLinkLayer.py`,
+`PiCN/Layers/LinkLayer/Interfaces/UDP4Interface.py`,
+`PiCN/Layers/LinkLayer/Interfaces/Simulation.py`,
+`PiCN/Layers/LinkLayer/Interfaces/LegacySyncInterfaceAdapter.py`, their new
+test files, `docs/baseline.md`.
+
+**Prompt:**
+
+```
+Confirm git status --short shows ONLY the files listed above (plus the usual
+ignored artifacts). If anything else changed, stop and report it.
+
+Stage exactly those files and commit with this message:
+
+  Phase 3: asyncio I/O boundary via an injected LinkLayerRunStrategy
+
+  Introduces AsyncRunStrategy alongside the untouched SyncRunStrategy
+  (ADR-008's 2026-08-04 addendum): every ProgramLib gets SyncRunStrategy by
+  default and is byte-for-byte unaffected; a ProgramLib opts into
+  AsyncRunStrategy explicitly, one at a time, ahead of Phase 5's node
+  assembly.
+
+  UDP4Interface and SimulationInterface gain register()/async send()
+  alongside their existing sync methods -- one class, two coexisting
+  surfaces, not a parallel hierarchy. AsyncRunStrategy composes Phase 2's
+  AsyncLayerProcess as BasicLinkLayer's internal engine, bridging the still-
+  multiprocessing queue_from_higher via one narrowly-scoped executor
+  (ADR-009's addendum), deleted rather than migrated once Phase 5 wires a
+  real AsyncLayerStack in.
+
+  LegacySyncInterfaceAdapter lets a third-party, un-migrated BaseInterface
+  implementation keep working under AsyncRunStrategy (deprecated on
+  introduction).
+
+  Verified via new standalone tests plus a full-suite regression run
+  recorded in docs/baseline.md ("After Phase 3") -- every existing test,
+  including every ProgramLib's, is unaffected.
+
+Then show: git status --short && git log --oneline -1
+```
+
+**Verify:**
+```bash
+git status --short && git log --oneline -1
+```
+
+**Expect:** a clean working tree apart from ignored files, and the new commit.
+
+---
+
+## Phase 3 exit criteria
+
+Do not start Phase 4 until **all** are true:
+
+- [ ] `SyncRunStrategy` reproduces today's `BasicLinkLayer` behaviour exactly
+      — every existing `LinkLayer`/`ProgramLibs` test still passes, unchanged
+- [ ] `AsyncRunStrategy` exists, is opt-in, and two `BasicLinkLayer` instances
+      running it exchange real UDP packets in both directions
+- [ ] `UDP4Interface` and `SimulationInterface` each carry both method
+      surfaces on one class — no parallel interface hierarchy
+- [ ] No blocking `recvfrom`/`sendto`/`select.*` call exists anywhere in
+      `AsyncRunStrategy` or the interfaces' new async methods
+- [ ] `file_descriptor` is untouched by the new async path (still used only
+      by `SyncRunStrategy` and its unchanged call sites)
+- [ ] Exactly one executor is created, inside `AsyncRunStrategy`, injected
+      into everything else that needs one
+- [ ] `LegacySyncInterfaceAdapter` exists, is marked deprecated, and is tested
+- [ ] `docs/baseline.md` has an "After Phase 3" section showing the full
+      suite unaffected outside the new test files
+
+---
+
+# Phases 4–7 — expand before use
 
 The remaining phases are specified in [`modernization.md`](modernization.md) but
 are **not yet broken down to prompt level**. Expand each into tasks using the
@@ -1144,7 +1682,6 @@ same format before handing to a small model:
 
 | Phase | Theme | Governing ADRs | Expand when |
 |---|---|---|---|
-| 3 | I/O boundary — `BaseInterface` contract, `UDP4Interface`, `BasicLinkLayer` | 008 | Phase 2 exits |
 | 4 | Remaining layers, simplest first | 009 | Phase 3 exits |
 | 5 | Node assembly — `ProgramLibs`, `Mgmt`, `starter/`, simulations | 006 | Phase 4 exits |
 | 6 | Delete the multiprocessing scaffolding | 002, 004 | Phase 5 exits |
@@ -1162,7 +1699,7 @@ recover from wrong ones badly.
 
 ### Rules that carry forward
 
-- One layer per task in Phases 3 and 4. Never batch layers.
+- One layer per task in Phase 4. Never batch layers.
 - Every task that changes behaviour must end with a baseline comparison, as in
   Task 1.8.
 - Phase 6 deletes code. Only delete what Phases 2–5 made unreachable — verify
