@@ -17,7 +17,7 @@ a verification command.
 | 1 | ADR-002 |
 | 2 | ADR-003, ADR-004, ADR-005, ADR-006, ADR-007, ADR-010 |
 | 3 | ADR-008 (and its 2026-08-04 addendum), ADR-009 (and its 2026-08-04 addendum) |
-| 4 | ADR-009 |
+| 4 | ADR-003 (and its 2026-08-04 extract-core addendum), ADR-009 (and its 2026-08-04 addendum), ADR-010 |
 
 ---
 
@@ -1695,25 +1695,407 @@ git status --short && git log --oneline -1
 
 Do not start Phase 4 until **all** are true:
 
-- [ ] `SyncRunStrategy` reproduces today's `BasicLinkLayer` behaviour exactly
+- [x] `SyncRunStrategy` reproduces today's `BasicLinkLayer` behaviour exactly
       — every existing `LinkLayer`/`ProgramLibs` test still passes, unchanged
-- [ ] `AsyncRunStrategy` exists, is opt-in, and two `BasicLinkLayer` instances
+- [x] `AsyncRunStrategy` exists, is opt-in, and two `BasicLinkLayer` instances
       running it exchange real UDP packets in both directions
-- [ ] `UDP4Interface` and `SimulationInterface` each carry both method
+- [x] `UDP4Interface` and `SimulationInterface` each carry both method
       surfaces on one class — no parallel interface hierarchy
-- [ ] No blocking `recvfrom`/`sendto`/`select.*` call exists anywhere in
+- [x] No blocking `recvfrom`/`sendto`/`select.*` call exists anywhere in
       `AsyncRunStrategy` or the interfaces' new async methods
-- [ ] `file_descriptor` is untouched by the new async path (still used only
+- [x] `file_descriptor` is untouched by the new async path (still used only
       by `SyncRunStrategy` and its unchanged call sites)
-- [ ] Exactly one executor is created, inside `AsyncRunStrategy`, injected
+- [x] Exactly one executor is created, inside `AsyncRunStrategy`, injected
       into everything else that needs one
-- [ ] `LegacySyncInterfaceAdapter` exists, is marked deprecated, and is tested
-- [ ] `docs/baseline.md` has an "After Phase 3" section showing the full
+- [x] `LegacySyncInterfaceAdapter` exists, is marked deprecated, and is tested
+- [x] `docs/baseline.md` has an "After Phase 3" section showing the full
       suite unaffected outside the new test files
 
 ---
 
-# Phases 4–7 — expand before use
+# Phase 4 — Remaining layers via extract-core
+
+**Purpose:** port every remaining layer onto the async model **without**
+breaking ProgramLibs still on `LayerStack`. Pattern (ADR-003's 2026-08-04
+addendum): extract handler logic into a non-process `*Core` module that
+returns `List[Outbound]`; keep the existing `LayerProcess` subclass as a
+thin sync wrapper; add a thin `AsyncLayerProcess` subclass. One layer per
+task. Do not wire any ProgramLib to an async wrapper in this phase.
+
+**Commit policy:** one commit for this planning expansion; then one commit
+per layer (Tasks 4.0–4.8); final baseline commit (Task 4.9).
+
+> **Read first:** [ADR-003](design-adrs/ADR-003-handler-lifecycle.md)
+> (including the 2026-08-04 extract-core addendum),
+> [ADR-009](design-adrs/ADR-009-cpu-bound-work.md) (including its 2026-08-04
+> addendum — `AsyncRunStrategy`'s temporary executor stays until Phase 5;
+> `AsyncLayerStack` owns the stack executor for async layers), and
+> [ADR-010](design-adrs/ADR-010-async-test-strategy.md) (plain pytest classes
+> for async tests, capital `Test` prefix).
+
+### Task 4.0 — `AsyncLayerStack` owns the executor
+
+**Goal:** `AsyncLayerStack` creates exactly one `ThreadPoolExecutor` at
+`start_all()`, injects it onto layers that expose `set_executor` /
+`executor`, and shuts it down with `wait=True` only after layer tasks have
+stopped (ADR-009).
+
+**Files:** `PiCN/LayerStack/AsyncLayerStack.py`, creates
+`PiCN/LayerStack/test/test_AsyncLayerStack_executor.py`.
+
+**Prompt:**
+
+```
+Read ADR-009 in full (including the 2026-08-04 addendum) and
+AsyncLayerStack.py before starting.
+
+In AsyncLayerStack:
+- Add optional constructor arg executor_workers: int = 4 (named constant
+  or default is fine; do not create the pool in __init__).
+- In start_all(): create self._executor = ThreadPoolExecutor(
+  max_workers=executor_workers) BEFORE starting layer tasks. For each
+  layer in self.layers, if hasattr(layer, "executor") as a writable
+  attribute or a set_executor method, inject self._executor. Do not
+  require every layer to accept an executor -- PacketEncoding will not
+  need one.
+- In stop_all(): after awaiting cancelled layer tasks (existing logic),
+  call self._executor.shutdown(wait=True) if it exists. Never shut the
+  executor down before layers stop.
+- Expose @property executor for tests.
+
+Create test_AsyncLayerStack_executor.py (plain pytest, Test prefix,
+@pytest.mark.asyncio):
+- start_all creates an executor; stop_all shuts it down (subsequent
+  submit raises RuntimeError or the pool is marked shutdown).
+- A stub AsyncLayerProcess with an .executor attribute receives the
+  injected executor on start_all.
+- Ordering: a layer whose stop is slow still completes before
+  executor.shutdown (use a short sleep in stop path or a done-callback
+  probe -- do not flake).
+
+Do not modify LayerStack.py (multiprocessing). Do not remove
+AsyncRunStrategy's executor (Phase 3 temporary exception).
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/LayerStack -q --timeout=60
+```
+
+**Expect:** all LayerStack tests pass, including the new executor tests.
+
+---
+
+### Task 4.1 — PacketEncoding: characterization, core, async wrapper
+
+**Goal:** establish the extract-core pattern on the simplest layer.
+
+**Files:** creates `PiCN/Processes/Outbound.py`,
+`PiCN/Layers/PacketEncodingLayer/PacketEncodingCore.py`,
+`PiCN/Layers/PacketEncodingLayer/AsyncBasicPacketEncodingLayer.py`,
+`PiCN/Layers/PacketEncodingLayer/test/test_characterization.py`,
+`PiCN/Layers/PacketEncodingLayer/test/test_AsyncBasicPacketEncodingLayer.py`;
+modifies `BasicPacketEncodingLayer.py`, `__init__.py`.
+
+**Prompt:**
+
+```
+Read BasicPacketEncodingLayer.py and ADR-003's extract-core addendum
+in full. Read ICNLayer's test_characterization.py for the sync
+characterization style.
+
+Step A -- characterization BEFORE extract:
+Create test/test_characterization.py locking current BasicPacketEncodingLayer
+behaviour via direct data_from_lower/data_from_higher calls with queue.Queue
+(no multiprocessing). Cover: valid encode path to_lower, valid decode path
+to_higher, malformed data (wrong length / non-int face id) drops with empty
+queues. Use SimpleStringEncoder. Run and confirm green BEFORE any extract.
+
+Step B -- shared Outbound:
+Create PiCN/Processes/Outbound.py with the frozen dataclass from ADR-003's
+addendum. Export from PiCN/Processes/__init__.py if that module already
+re-exports public types.
+
+Step C -- PacketEncodingCore:
+Move check_data/encode/decode and the handler bodies into
+PacketEncodingCore. handle_from_higher / handle_from_lower return
+List[Outbound]. Core takes encoder + logger (or a thin logger-like
+object). Core must not import or touch Queue.
+
+Step D -- slim BasicPacketEncodingLayer:
+Keep the same public API (__init__, encoder property, data_from_*,
+encode, decode, check_data can delegate to core). data_from_* apply
+Outbound via to_lower.put / to_higher.put. Existing
+test_BasicPacketEncodingLayer.py must pass unchanged.
+
+Step E -- AsyncBasicPacketEncodingLayer(AsyncLayerProcess):
+Same core; async def data_from_* apply Outbound with await put.
+Export from package __init__.py.
+
+Step F -- async tests:
+test_AsyncBasicPacketEncodingLayer.py -- plain pytest Test* class,
+@pytest.mark.asyncio, mirror the characterization cases with
+asyncio.Queue.
+
+Do not modify ProgramLibs. Do not delete encode/decode from the sync
+class's public surface if tests call them.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/PacketEncodingLayer -q --timeout=30
+```
+
+**Expect:** characterization + sync + async + encoder tests all pass.
+
+---
+
+### Task 4.2 — ICNLayer extract-core + async wrapper
+
+**Goal:** port ICN forwarding logic into a core; async wrapper; ageing via
+asyncio on the async path only.
+
+**Files:** creates `ICNLayerCore.py`, `AsyncBasicICNLayer.py`,
+`test/test_AsyncBasicICNLayer.py`; modifies `BasicICNLayer.py`.
+
+**Prompt:**
+
+```
+Read BasicICNLayer.py in full and test/test_characterization.py.
+Extract handle_* / data_from_* logic into ICNLayerCore returning
+List[Outbound]. Preserve observed behaviour including existing log
+messages and error paths (ADR-001). Slim BasicICNLayer keeps ageing()
+with threading.Timer unchanged. AsyncBasicICNLayer: async handlers;
+start() also starts an ageing task that periodically runs the same
+ageing logic the sync path uses (emit Outbounds / put to queues),
+cancelled in stop(). Existing characterization and test_BasicICNLayer
+must pass. New async tests cover at least the characterization scenarios
+awaited against AsyncBasicICNLayer. Do not change CS/FIB/PIT classes.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ICNLayer -q --timeout=90
+```
+
+**Expect:** all ICNLayer tests pass.
+
+---
+
+### Task 4.3 — ChunkLayer extract-core + async wrapper
+
+**Goal:** same pattern; async path uses plain dict/list instead of
+`multiprocessing.Manager` proxies where the core owns request/chunk tables.
+
+**Files:** creates `ChunkLayerCore.py`, `AsyncBasicChunkLayer.py`, tests;
+modifies `BasicChunkLayer.py`.
+
+**Prompt:**
+
+```
+Read BasicChunkLayer.py. Extract core returning List[Outbound]. Sync
+wrapper may keep Manager-backed structures if required for MP sharing.
+Async wrapper constructs plain dict/list storage for the core. Add
+characterization if none exists (direct handler calls) before extract.
+Existing chunk tests must pass on the sync class. Async tests cover
+round-trip chunking interest/content paths with asyncio.Queue.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ChunkLayer -q --timeout=60
+```
+
+**Expect:** all ChunkLayer tests pass.
+
+---
+
+### Task 4.4 — RepositoryLayer extract-core + async wrapper
+
+**Goal:** thin core; audit repository `get_content` for blocking I/O;
+use injected executor via `run_in_executor` only if measured >~10ms
+(ADR-009 rule 1) — otherwise call on the loop and document the
+measurement in the commit message.
+
+**Files:** creates `RepositoryLayerCore.py`, `AsyncBasicRepositoryLayer.py`,
+tests; modifies `BasicRepositoryLayer.py`.
+
+**Prompt:**
+
+```
+Read BasicRepositoryLayer.py and SimpleFileSystemRepository. Extract
+core. Async wrapper accepts optional executor=None; if executor is set
+and the repo is file-backed, dispatch get_content through
+run_in_executor with a pure function (path/args in, content out -- no
+layer self). If leaving on the loop, add a comment with the measurement.
+Existing tests pass. Add async tests with an in-memory repository.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/RepositoryLayer -q --timeout=60
+```
+
+**Expect:** all RepositoryLayer tests pass.
+
+---
+
+### Task 4.5 — TimeoutPreventionLayer extract-core + async wrapper
+
+**Goal:** extract core; sync keeps `threading.Timer` ageing; async uses
+asyncio task.
+
+**Files:** creates `TimeoutPreventionCore.py`,
+`AsyncBasicTimeoutPreventionLayer.py`, tests; modifies
+`BasicTimeoutPreventionLayer.py`.
+
+**Prompt:**
+
+```
+Read BasicTimeoutPreventionLayer.py. Extract core returning
+List[Outbound]. Preserve KEEPALIVE/R2C behaviour. Async ageing task
+mirrors sync interval. Existing tests pass; add async tests for at
+least one keepalive path.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/TimeoutPreventionLayer -q --timeout=60
+```
+
+**Expect:** all TimeoutPreventionLayer tests pass.
+
+---
+
+### Task 4.6 — NFNLayer extract-core + async wrapper
+
+**Goal:** extract core; CPU-bound `executor.execute` goes through the
+injected stack executor (pure wrt layer state -- ADR-009).
+
+**Files:** creates `NFNLayerCore.py`, `AsyncBasicNFNLayer.py`, tests;
+modifies `BasicNFNLayer.py`.
+
+**Prompt:**
+
+```
+Read BasicNFNLayer.py. Extract core. Async wrapper requires executor
+injection for named-function execution: run_in_executor(executor, pure_fn,
+...). Do not pass self into the executor. Sync path unchanged behaviour.
+Existing NFNLayer tests pass; add async tests covering a simple compute
+path with a ThreadPoolExecutor injected manually (AsyncLayerStack wiring
+is Phase 5).
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/NFNLayer -q --timeout=120
+```
+
+**Expect:** all NFNLayer tests pass (same known x86 native failures on
+macOS if they appear -- do not "fix" them here).
+
+---
+
+### Task 4.7 — ThunkLayer extract-core + async wrapper
+
+**Goal:** extract stateful thunk logic into a core; async wrapper.
+
+**Files:** creates `ThunkLayerCore.py`, `AsyncBasicThunkLayer.py`, tests;
+modifies thunk layer module.
+
+**Prompt:**
+
+```
+Read BasicThunkLayer.py (or equivalent). Extract core returning
+List[Outbound]. No timer changes unless the layer has one. Existing
+tests pass; add async characterization-style tests.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ThunkLayer -q --timeout=90
+```
+
+**Expect:** all ThunkLayer tests pass.
+
+---
+
+### Task 4.8 — RoutingLayer + AutoconfigLayer
+
+**Goal:** extract-core for both packages (two commits if needed, but one
+task checklist); timer-driven work becomes asyncio on async wrappers
+only. Sync `start_process`/`stop_process` timer behaviour preserved.
+
+**Files:** Routing and Autoconfig layer modules + async wrappers + tests.
+
+**Prompt:**
+
+```
+Port RoutingLayer then AutoconfigLayer using the established pattern.
+Do not batch their commits with unrelated layers. Preserve broadcast /
+RIB ageing behaviour. Existing tests pass; add minimal async tests per
+package.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/RoutingLayer PiCN/Layers/AutoconfigLayer -q --timeout=120
+```
+
+**Expect:** all tests in both packages pass.
+
+---
+
+### Task 4.9 — Verification sweep and baseline update
+
+**Goal:** confirm extract-core rules hold; full suite vs Phase 3 baseline.
+
+**Files:** updates `docs/baseline.md` only (plus checklist ticks in
+agent-tasks if you mark exit criteria).
+
+**Prompt:**
+
+```
+Run:
+  grep -rn "to_lower\.put\|to_higher\.put" PiCN/Layers/ --include='*Core.py'
+  grep -rn "ThreadPoolExecutor\|ProcessPoolExecutor" PiCN/LayerStack/ PiCN/Layers/ --include='*.py' | grep -v test
+  grep -rn "async def data_from_lower" PiCN/Layers/ --include='*.py' | grep -v test
+
+Expect: no puts in *Core.py; ThreadPoolExecutor only in AsyncLayerStack
+(and AsyncRunStrategy's Phase-3 temporary one in LinkLayer/RunStrategy.py);
+async def data_from_lower present for each migrated async wrapper.
+
+Full suite:
+  python -m pytest -v --timeout=90 -p no:cacheprovider > /tmp/phase4-run.txt 2>&1
+  tail -5 /tmp/phase4-run.txt
+
+Compare to "After Phase 3". No regressions outside new tests. Add
+"After Phase 4" to docs/baseline.md.
+```
+
+**Verify:**
+```bash
+grep -A20 "After Phase 4" docs/baseline.md
+```
+
+**Expect:** section present; no regressions.
+
+---
+
+## Phase 4 exit criteria
+
+Do not start Phase 5 until **all** are true:
+
+- [ ] `AsyncLayerStack` owns exactly one executor; layers never create one
+- [ ] Every Phase-4 layer has `*Core` + sync wrapper + `Async*` wrapper
+- [ ] No `*Core.py` touches queues
+- [ ] Existing sync/ProgramLib tests still pass
+- [ ] Each async wrapper has tests
+- [ ] `docs/baseline.md` has "After Phase 4"
+
+---
+
+# Phases 5–7 — expand before use
 
 The remaining phases are specified in [`modernization.md`](modernization.md) but
 are **not yet broken down to prompt level**. Expand each into tasks using the
@@ -1721,24 +2103,13 @@ same format before handing to a small model:
 
 | Phase | Theme | Governing ADRs | Expand when |
 |---|---|---|---|
-| 4 | Remaining layers, simplest first | 009 | Phase 3 exits |
 | 5 | Node assembly — `ProgramLibs`, `Mgmt`, `starter/`, simulations | 006 | Phase 4 exits |
 | 6 | Delete the multiprocessing scaffolding | 002, 004 | Phase 5 exits |
 | 7 | Test infrastructure and CI | 010 | Phase 6 exits |
 | 8 | Coverage completion (runs continuously) | 010 | Any time after 7 |
 
-The design decisions for these phases are **already made** — see
-[`design-adrs/`](design-adrs/README.md). What is missing is only the breakdown
-into atomic tasks, which depends on what the preceding phase actually produced.
-
-**Why not written now:** each phase's tasks depend on what the previous phase
-actually produced. Writing them in advance would specify against a codebase that
-does not exist yet, and small models follow precise instructions well but
-recover from wrong ones badly.
-
 ### Rules that carry forward
 
-- One layer per task in Phase 4. Never batch layers.
 - Every task that changes behaviour must end with a baseline comparison, as in
   Task 1.8.
 - Phase 6 deletes code. Only delete what Phases 2–5 made unreachable — verify

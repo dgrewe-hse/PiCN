@@ -97,3 +97,77 @@ grep -rn "time.sleep" PiCN/Layers/ --include=*.py | grep -v test
 ```
 
 Expect **empty output**.
+
+---
+
+## Addendum (2026-08-04) — Extract-core migration for Phase 4
+
+Phase 3 kept `BasicLinkLayer` as one class with an injected run strategy.
+Phase 4 layers cannot do the same for handlers: Python cannot keep both a
+synchronous and an asynchronous `data_from_lower` under the same name (the
+same shadowing trap that forced `send_async` in ADR-008). Converting the
+production class in place would break every `ProgramLib` still on
+`LayerStack` until Phase 5.
+
+### Decision
+
+**Extract shared core** per layer:
+
+1. Move handler *logic* into a non-process module (`*Core.py`). The core
+   **never** touches queue objects.
+2. Keep the existing `LayerProcess` subclass as a thin **sync wrapper**
+   that applies outbound actions with synchronous `queue.put(...)`.
+   ProgramLibs and existing tests keep calling it unchanged.
+3. Add a thin **async wrapper** subclassing `AsyncLayerProcess` whose
+   `async def data_from_*` handlers apply the same outbound actions with
+   `await queue.put(...)`. ADR-003 Option C applies to this wrapper.
+
+Rejected alternatives: full parallel class hierarchies that duplicate
+logic; in-place `async def` on the production class.
+
+### Outbound contract
+
+Handlers that today call `to_lower.put(...)` / `to_higher.put(...)`
+mid-flow instead return a list of outbound actions:
+
+```python
+from dataclasses import dataclass
+from typing import Any, Literal
+
+@dataclass(frozen=True)
+class Outbound:
+    direction: Literal["lower", "higher"]
+    item: Any
+```
+
+The shared type lives in `PiCN/Processes/Outbound.py`. Sync wrappers call
+`put`; async wrappers `await put`. Behaviour lives only in the core.
+
+### Ageing / timers
+
+Layers that today reschedule work with `threading.Timer` keep that path
+on the sync wrapper (ProgramLibs still start ageing that way). The async
+wrapper replaces the timer with an `asyncio` task started from `start()`
+and cancelled in `stop()` — same interval and logic, different scheduler.
+
+### Verification (Phase 4 amended)
+
+The original "every `data_from_*` is `async def`" grep does **not** apply
+until Phase 5/6 delete the sync wrappers. During Phase 4 expect:
+
+- Sync wrappers: synchronous `def data_from_*` (intentional).
+- Async wrappers: `async def data_from_*`.
+- Cores: no `data_from_*` at all — named `handle_from_*` (or equivalent)
+  returning `List[Outbound]`.
+
+```bash
+grep -rn "async def data_from_lower\|async def data_from_higher" PiCN/Layers/ --include='*.py' | grep -v test
+```
+
+Expect one hit pair per migrated layer's async wrapper.
+
+```bash
+grep -rn "to_lower\.put\|to_higher\.put\|await to_lower\.put\|await to_higher\.put" PiCN/Layers/ --include='*Core.py'
+```
+
+Expect **empty** — cores must not touch queues.
