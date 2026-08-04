@@ -1,26 +1,20 @@
-"""This is the BasicThunk layer used to check if it is possible to compute a result, and determine the
-cost of computing the result"""
+"""Async thunk planning layer wrapper around ThunkLayerCore (ADR-003)."""
 
-import multiprocessing
-
-from PiCN.Layers.ICNLayer.PendingInterestTable import BasePendingInterestTable
 from PiCN.Layers.ICNLayer.ContentStore import BaseContentStore
 from PiCN.Layers.ICNLayer.ForwardingInformationBase import BaseForwardingInformationBase
+from PiCN.Layers.ICNLayer.PendingInterestTable import BasePendingInterestTable
 from PiCN.Layers.LinkLayer.FaceIDTable import BaseFaceIDTable
 from PiCN.Layers.NFNLayer.Parser import DefaultNFNParser
-from PiCN.Layers.ThunkLayer.ThunkTable import BaseThunkTable
 from PiCN.Layers.RepositoryLayer.Repository import BaseRepository
 from PiCN.Layers.ThunkLayer.PlanTable import PlanTable
 from PiCN.Layers.ThunkLayer.ThunkLayerCore import ThunkLayerCore
-from PiCN.Processes import LayerProcess
+from PiCN.Layers.ThunkLayer.ThunkTable import BaseThunkTable
+from PiCN.Processes.AsyncLayerProcess import AsyncLayerProcess
 from PiCN.Processes.Outbound import Outbound
 
 
-class BasicThunkLayer(LayerProcess):
-    """Thunk planning layer.
-
-    Thin sync wrapper around :class:`ThunkLayerCore` (ADR-003 extract-core).
-    """
+class AsyncBasicThunkLayer(AsyncLayerProcess):
+    """Async thin wrapper around :class:`ThunkLayerCore`."""
 
     def __init__(
         self,
@@ -28,20 +22,20 @@ class BasicThunkLayer(LayerProcess):
         fib: BaseForwardingInformationBase,
         pit: BasePendingInterestTable,
         faceidtable: BaseFaceIDTable,
-        thunkTable: BaseThunkTable,
-        planTable: PlanTable,
+        thunk_table: BaseThunkTable,
+        plan_table: PlanTable,
         parser: DefaultNFNParser,
         repo: BaseRepository = None,
-        log_level=255,
+        log_level: int = 255,
     ):
-        super().__init__("ThunkLayer", log_level)
+        super().__init__(logger_name="ThunkLayer", log_level=log_level)
         self._core = ThunkLayerCore(
             cs=cs,
             fib=fib,
             pit=pit,
             faceidtable=faceidtable,
-            thunk_table=thunkTable,
-            plan_table=planTable,
+            thunk_table=thunk_table,
+            plan_table=plan_table,
             parser=parser,
             repo=repo,
             logger=self.logger,
@@ -103,43 +97,22 @@ class BasicThunkLayer(LayerProcess):
     def planTable(self):
         return self._core.planTable
 
-    def _apply_outbound(self, out: Outbound, to_lower, to_higher) -> None:
+    async def _apply_outbound(self, out: Outbound, to_lower, to_higher) -> None:
         if out.direction == "lower":
-            to_lower.put(out.item)
+            await to_lower.put(out.item)
         elif out.direction == "higher":
-            to_higher.put(out.item)
+            await to_higher.put(out.item)
         elif out.direction == "queue_lower":
             if self.queue_to_lower is not None:
-                self.queue_to_lower.put(out.item)
+                await self.queue_to_lower.put(out.item)
         elif out.direction == "queue_higher":
             if self.queue_to_higher is not None:
-                self.queue_to_higher.put(out.item)
+                await self.queue_to_higher.put(out.item)
 
-    def data_from_lower(self, to_lower: multiprocessing.Queue, to_higher: multiprocessing.Queue, data):
-        for out in self._core.handle_from_lower(data):
-            self._apply_outbound(out, to_lower, to_higher)
-
-    def data_from_higher(self, to_lower: multiprocessing.Queue, to_higher: multiprocessing.Queue, data):
+    async def data_from_higher(self, to_lower, to_higher, data) -> None:
         for out in self._core.handle_from_higher(data):
-            self._apply_outbound(out, to_lower, to_higher)
+            await self._apply_outbound(out, to_lower, to_higher)
 
-    def removeThunkMarker(self, name):
-        return self._core.removeThunkMarker(name)
-
-    def addThunkMarker(self, name):
-        return self._core.addThunkMarker(name)
-
-    def generatePossibleThunkNames(self, ast, res=None):
-        return self._core.generatePossibleThunkNames(ast, res)
-
-    def all_data_available(self, name):
-        return self._core.all_data_available(name)
-
-    def compute_cost_and_requests(self, ast, dataset):
-        return self._core.compute_cost_and_requests(ast, dataset)
-
-    def get_data_size(self, name):
-        return self._core.get_data_size(name)
-
-    def isthunk(self, name):
-        return self._core.isthunk(name)
+    async def data_from_lower(self, to_lower, to_higher, data) -> None:
+        for out in self._core.handle_from_lower(data):
+            await self._apply_outbound(out, to_lower, to_higher)
