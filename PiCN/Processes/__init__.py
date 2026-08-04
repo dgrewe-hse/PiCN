@@ -42,4 +42,6 @@ configure_start_method()
 
 from .PiCNProcess import PiCNProcess
 from .LayerProcess import LayerProcess
+from .AsyncLayerProcess import AsyncLayerProcess
+from .Outbound import Outbound
 from .PiCNSyncDataStructFactory import PiCNSyncDataStructFactory
