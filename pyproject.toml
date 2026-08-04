@@ -8,12 +8,11 @@ version = "0.1.0"
 description = "A modular Python ICN implementation"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
-# The modernization effort on this branch targets Python 3.14 exclusively
-# (see AGENTS.md / docs/modernization.md). Earlier classifiers below record
-# what upstream historically supported before this branch's floor was raised.
+# The modernization effort targets Python 3.14 exclusively
 requires-python = ">=3.14"
 authors = [
     {name = "Christopher Scherb", email = "christopher.scherb@unibas.ch"},
+    {name = "Dennis Grewe", email = "dennis.grewe@hs-esslingen.de"},
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -32,7 +31,7 @@ classifiers = [
 
 [project.optional-dependencies]
 opencv = ["opencv-python>=4.2"]
-dev = ["pytest", "pytest-timeout", "pytest-rerunfailures"]
+dev = ["pytest", "pytest-timeout", "pytest-rerunfailures", "pytest-asyncio"]
 
 [project.scripts]
 # No console scripts — entry points live in starter/ and ProgramLibs/
@@ -46,3 +45,9 @@ testpaths = ["PiCN", "PiCNExternal"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = "-q"
+# ADR-010: strict mode requires every async test to be explicitly marked with
+# @pytest.mark.asyncio (no silent auto-detection of coroutine tests), and
+# function-scoped loops give each test a fresh event loop -- no state leaks
+# between tests, no order-dependent failures.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"

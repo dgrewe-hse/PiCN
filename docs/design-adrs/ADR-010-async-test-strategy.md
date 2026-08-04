@@ -130,3 +130,53 @@ Suite is order-independent — run it shuffled and compare against the baseline:
 
 Counts must match the ordered run. A difference means shared state between
 tests.
+
+## Addendum (2026-08-04): `pytest-asyncio` does not run on `unittest.TestCase`
+
+Discovered while implementing Task 2.2, not anticipated when this ADR was
+written: `@pytest.mark.asyncio` has no effect on a coroutine method defined on
+a `unittest.TestCase` subclass. Pytest hands `unittest.TestCase` tests to
+`unittest`'s own test-running protocol, which pytest-asyncio's collection
+hooks never see. `unittest` then calls the async `test_*` method like any
+other, gets back a coroutine object, discards it, and reports the test as
+**passed** — the body never ran.
+
+This is strictly worse than the `auto`-mode failure mode this ADR rejected in
+"Options": a missing mark there at least *runs* the coroutine (just without
+pytest-asyncio's fixture support), whereas this silently no-ops the entire
+test. It was caught only because the assertions inside were checked by eye
+against a `RuntimeWarning: coroutine ... was never awaited` in the output —
+nothing red anywhere.
+
+**Rule, superseding nothing but adding a precondition to "mark every async
+test":** any test file containing `@pytest.mark.asyncio` tests must use plain
+pytest test classes (a bare class, or none — module-level `test_*` functions
+are fine too), **never** `unittest.TestCase`. Use `setup_method`/
+`teardown_method` in place of `setUp`/`tearDown`. This is a deliberate,
+file-level exception to matching the existing `unittest.TestCase` style
+elsewhere in the codebase (AGENTS.md's docstring/style guidance is about
+*conventions*, not about silently swallowing test bodies) — call it out in a
+comment at the top of any such file so a future contributor does not "fix" it
+back to `unittest.TestCase` by habit.
+
+A second, related trap: if you do use a bare class, **name it with a capital
+`Test` prefix** (`TestFoo`), not this repo's usual lowercase `test_ClassName`.
+`unittest.TestCase` subclasses are exempt from pytest's `python_classes`
+name filter — pytest discovers them by inheritance instead — which is why the
+rest of the suite gets away with lowercase names. A bare class has no such
+exemption: `class test_Foo` silently collects **zero** tests, no error, no
+warning, just `collected 0 items`. Prefer module-level `test_*` functions to
+sidestep this entirely if a shared setup fixture is not needed.
+
+**Added verification** — no async test is defined on a `unittest.TestCase`:
+
+```bash
+grep -rlZ "unittest.TestCase" PiCN/ --include=test_*.py | xargs -0 grep -l "pytest.mark.asyncio" 2>/dev/null
+```
+
+Expect **empty output**. (`IsolatedAsyncioTestCase` was considered as an
+alternative fix — it does run async `unittest.TestCase` methods natively — but
+rejected here because it would mean two different, mutually exclusive async
+test mechanisms in one suite depending on base class, which is precisely the
+ambiguity ADR-010 exists to avoid. Plain pytest classes keep exactly one
+mechanism.)

@@ -149,3 +149,69 @@ tasks completed when their PRs were merged:
   optional-dependency group existed (added retroactively), and
   `requires-python` was `>=3.6` instead of reflecting this branch's actual
   Python 3.14-only target (corrected retroactively).
+
+## After Phase 2 (Tasks 2.1-2.5)
+
+Async foundations added: `AsyncLayerProcess` (`PiCN/Processes/`) and
+`AsyncLayerStack` (`PiCN/LayerStack/`), per ADR-003 through ADR-007 and
+ADR-010. Purely additive — verified below that no production code references
+either new class yet.
+
+### ADR grep verifications (all eight, against the two new files)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | No unbounded `asyncio.Queue()` (ADR-005) | empty |
+| 2 | No `put_nowait`/`QueueFull` (ADR-005) | empty |
+| 3 | No `terminate()`/`time.sleep()` outside docstrings (ADR-006) | empty |
+| 4 | Every `except asyncio.CancelledError` re-raises (ADR-006) | inspected by eye — it does |
+| 5 | Every handler is `async def` (ADR-003) | empty (no non-async matches) |
+| 6 | Every `create_task` is retained, never bare (ADR-007) | all 3 hits assign to a variable |
+| 7 | No blanket `except Exception` (ADR-007) | empty |
+| 8 | No `@pytest.mark.asyncio` on a `unittest.TestCase` (ADR-010 addendum) | empty |
+
+### Full-suite run
+
+```
+python -m pytest -v --timeout=90 -p no:cacheprovider
+491 collected, 0 collection errors
+487 passed, 4 failed, in 639s (0:10:39)
+```
+
+**No regressions.** The 4 failures are the exact same `test_x86Executor.py` /
+`test_FetchNFN.py` native-code cases documented under "The 5 failures, and why
+none of them are migration regressions" above — same root cause (CWD-relative
+path, macOS-only code path). The 5th test documented there
+(`test_NFNForwarder_compute_subcomp_two_nodes`, the port-collision flake)
+simply didn't hit its race this run and passed — consistent with it being
+flaky, not with anything changing.
+
+Collected count went from 469 (Phase 1) to 491, +22. Phase 2 added 18 tests
+(5 in `test_AsyncLayerProcess.py`, 13 in `test_AsyncLayerStack.py`); the
+remaining +4 is not accounted for by this phase's changes (`git status`
+confirms no other file changed) and is most likely small environment drift
+between this run and the Phase 1 run recorded days earlier — not investigated
+further, since the invariant that actually matters (no previously-passing test
+now fails, same known failures) holds regardless.
+
+### Confirmed: no production code uses the new classes yet
+
+```
+grep -rln "AsyncLayerProcess\|AsyncLayerStack" PiCN/ --include='*.py' | grep -v "/test/"
+```
+
+Returns only the two new files themselves — exactly the Phase 2 exit criterion
+in `docs/agent-tasks.md`.
+
+### A real bug found and fixed along the way (not a regression — new code)
+
+Task 2.2's original draft nested the two per-direction pump tasks in an
+`asyncio.TaskGroup`. That was corrected before landing: `TaskGroup` wraps
+every child exception in an `ExceptionGroup`, even a single one, which would
+have hidden the real exception type from Task 2.4's stack-level failure
+detection. `AsyncLayerProcess.run()` uses `asyncio.wait(FIRST_EXCEPTION)`
+instead, so a layer's exception propagates unwrapped. `docs/agent-tasks.md`
+and `docs/design-adrs/ADR-010-async-test-strategy.md` were both corrected to
+match (the latter also gained an "Addendum" documenting that
+`@pytest.mark.asyncio` silently no-ops on `unittest.TestCase` methods — caught
+the same way, before it could produce a false-positive test file).

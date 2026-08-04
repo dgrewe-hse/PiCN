@@ -43,7 +43,7 @@ jobs:
         # and is only needed for unrelated demos (see AGENTS.md). The same
         # packages are declared as the "dev" extra in pyproject.toml for
         # local contributors who do want `pip install -e .[dev]`.
-        run: python -m pip install --upgrade pip && pip install pytest pytest-timeout pytest-rerunfailures numpy
+        run: python -m pip install --upgrade pip && pip install pytest pytest-timeout pytest-rerunfailures pytest-asyncio numpy
 
       - name: Run test suite
         run: >

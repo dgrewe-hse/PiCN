@@ -766,7 +766,8 @@ Create PiCN/Processes/AsyncLayerProcess.py, a NEW file, containing:
        async def data_from_higher(self, to_lower, to_higher, data) -> None
    - async def run(self) -> None: the single run loop, replacing LayerProcess's
      three _run_* variants. Implement it as one task per direction, per
-     ADR-004 rule 1:
+     ADR-004 rule 1, using asyncio.wait(FIRST_EXCEPTION) rather than
+     asyncio.TaskGroup:
 
        async def run(self) -> None:
            async def _pump_lower() -> None:
@@ -779,16 +780,41 @@ Create PiCN/Processes/AsyncLayerProcess.py, a NEW file, containing:
                    data = await self.queue_from_higher.get()
                    await self.data_from_higher(self.queue_to_lower, self.queue_to_higher, data)
 
-           async with asyncio.TaskGroup() as tg:
-               if self.queue_from_lower is not None:
-                   tg.create_task(_pump_lower())
-               if self.queue_from_higher is not None:
-                   tg.create_task(_pump_higher())
+           tasks = []
+           if self.queue_from_lower is not None:
+               tasks.append(asyncio.create_task(_pump_lower()))
+           if self.queue_from_higher is not None:
+               tasks.append(asyncio.create_task(_pump_higher()))
+           if not tasks:
+               return
 
-     Note: nesting these two pumps in their own TaskGroup means a handler
-     exception on one side cancels the other side of the SAME layer and
-     propagates out of run() — this is what task 2.3/2.4's stack-level
-     supervision then observes.
+           try:
+               done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+           except asyncio.CancelledError:
+               # asyncio.wait() does NOT cancel the tasks it waits on -- that
+               # is run()'s job when run() itself is cancelled (ADR-006).
+               for t in tasks:
+                   t.cancel()
+               await asyncio.wait(tasks)
+               raise
+
+           for t in pending:
+               t.cancel()
+           if pending:
+               await asyncio.wait(pending)
+           for t in done:
+               if t.cancelled():
+                   continue
+               exc = t.exception()
+               if exc is not None:
+                   raise exc
+
+     IMPORTANT: do NOT nest the two pumps in an asyncio.TaskGroup instead.
+     TaskGroup wraps every child exception in an ExceptionGroup -- even a
+     single one -- which would hide the original exception type from Task
+     2.4's stack-level supervision and break its "assert it IS that exception,
+     not wrapped" requirement below. asyncio.wait(FIRST_EXCEPTION) propagates
+     the raw exception unchanged.
    - def start(self) -> asyncio.Task: idempotent — if self._task is None or
      already done, create it with self._task = asyncio.create_task(self.run(),
      name=...) using the logger name. Always return self._task. Must be called
@@ -800,11 +826,18 @@ Create PiCN/Processes/AsyncLayerProcess.py, a NEW file, containing:
      immediately (no-op — ADR-006 rule #4). Set self._task = None in a finally
      block so a stopped layer can be started again.
 
-Create PiCN/Processes/test/test_AsyncLayerProcess.py, matching the style of
-test_LayerProcess.py but using pytest-asyncio (@pytest.mark.asyncio on every
-async test, per ADR-010). Define one minimal concrete subclass of
-AsyncLayerProcess for testing (e.g. one that appends received data to a list,
-or echoes it onto the opposite queue). Cover:
+Create PiCN/Processes/test/test_AsyncLayerProcess.py, matching test_LayerProcess.py's
+test cases and naming but NOT its unittest.TestCase base class: use a plain
+pytest test class (or module-level test functions) with @pytest.mark.asyncio
+on every async test. Read ADR-010's "Addendum" section first —
+pytest-asyncio's marker has no effect on unittest.TestCase methods; it silently
+reports the test as passed without ever running its body. If you use a class,
+name it with a capital "Test" prefix (e.g. TestAsyncLayerProcess), NOT this
+repo's usual lowercase test_ClassName — a bare class named test_Foo silently
+collects zero tests (see the Addendum for why). Use setup_method/teardown_method
+in place of setUp/tearDown.
+Define one minimal concrete subclass of AsyncLayerProcess for testing (e.g. one
+that echoes data onto the opposite queue, mirroring LayerMock). Cover:
 - An item placed on queue_from_lower is dispatched to data_from_lower with the
   correct to_lower/to_higher arguments; likewise for queue_from_higher.
 - stop() on a layer that was never started is a no-op (returns promptly,
@@ -873,9 +906,15 @@ Create PiCN/LayerStack/AsyncLayerStack.py, a NEW file, containing:
      "# set by start_all(), Task 2.4" comment where it belongs.
    - Do NOT implement close_all() — asyncio.Queue needs no explicit close.
 
-Create PiCN/LayerStack/test/test_AsyncLayerStack.py, matching the style of
-test_LayerStack.py, using pytest-asyncio for anything that touches a running
-loop. Reuse the concrete AsyncLayerProcess subclass pattern from Task 2.2 (a
+Create PiCN/LayerStack/test/test_AsyncLayerStack.py, matching test_LayerStack.py's
+test cases but NOT its unittest.TestCase base class: use a plain pytest test
+class (or module-level test functions) with @pytest.mark.asyncio on every
+async test (see ADR-010's "Addendum" — pytest-asyncio silently no-ops async
+unittest.TestCase methods instead of running them). If you use a class, name it
+with a capital "Test" prefix (e.g. TestAsyncLayerStack), NOT this repo's usual
+lowercase test_ClassName — a bare class named test_Foo silently collects zero
+tests. Reuse the concrete
+AsyncLayerProcess subclass pattern from Task 2.2 (a
 tiny dummy layer) to build 2- and 3-layer stacks. Cover:
 - Construction wires queue_to_lower/queue_from_lower/queue_to_higher/
   queue_from_higher correctly between adjacent layers, and the top/bottom
