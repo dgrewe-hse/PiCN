@@ -2239,12 +2239,9 @@ ASYNC path:
   (plus async autoconfig/routing wrappers if those flags are set)
 - AsyncLayerStack; inject executor into layers that need it
 - AsyncMgmt
-- async def start_forwarder() / async def stop_forwarder()  -- OR
-  start_forwarder detects runtime and for ASYNC requires being called
-  from a running loop / returns a coroutine. Prefer explicit
-  async start_forwarder_async / stop_forwarder_async names if that
-  avoids breaking sync callers that call start_forwarder() without
-  await. Document the choice.
+- Prefer explicit async start_forwarder_async / stop_forwarder_async
+  (and never overload sync start_forwarder() as a coroutine -- sync
+  callers must keep calling start_forwarder() without await).
 
 Do NOT call icnlayer.ageing() on the async path.
 Add async integration test: start, mgmt or UDP interest/content path,
@@ -2269,9 +2266,14 @@ python -m pytest PiCN/ProgramLibs/ICNForwarder -q --timeout=90
 **Prompt:**
 
 ```
-Apply Task 5.2's pattern to Fetch. Async path: AsyncLayerStack + async
-layers + no Mgmt. Ensure fetch_data / interest paths work under
-asyncio.run. Sync tests unchanged.
+Apply Task 5.2's pattern to Fetch (runtime= + start_fetch_async /
+stop_fetch_async). CRITICAL: sync Fetch calls start_all() inside
+__init__ today -- the ASYNC path must NOT start the stack from
+__init__ (there is no running event loop). Defer start to
+await start_fetch_async(). Keep sync __init__ behaviour unchanged.
+Async path: AsyncLayerStack + async layers + no Mgmt. Ensure
+fetch_data / interest paths work under asyncio.run. Sync tests
+unchanged.
 ```
 
 **Verify:**
@@ -2295,7 +2297,8 @@ python -m pytest PiCN/ProgramLibs/Fetch -q --timeout=120
 Shared builder for NFNForwarder. Async: AsyncBasicNFNLayer with
 executor from AsyncLayerStack, AsyncBasicChunkLayer,
 AsyncBasicTimeoutPreventionLayer, optional AsyncBasicThunkLayer,
-AsyncBasicICNLayer, etc. Do not call ageing() on async wrappers.
+AsyncBasicICNLayer, etc. Use start_forwarder_async /
+stop_forwarder_async. Do not call ageing() on async wrappers.
 Async tests: simple compute interest if feasible; otherwise stack
 start/stop + one packet path. Sync tests unchanged (known x86
 failures ok).
@@ -2321,8 +2324,9 @@ python -m pytest PiCN/ProgramLibs/NFNForwarder -q --timeout=120
 
 ```
 Port ICNDataRepository, ICNPushRepository, and NFNForwarderData using
-the same runtime= switch. One commit is fine for this task if the
-diffs stay reviewable; split if large. Sync tests must pass.
+the same runtime= switch and *_async start/stop names. One commit is
+fine for this task if the diffs stay reviewable; split if large. Sync
+tests must pass.
 ```
 
 **Verify:**
@@ -2346,9 +2350,9 @@ SIGINT cancels cleanly (ADR-006).
 ```
 Add a --runtime async|sync flag (default sync) to picn-relay,
 picn-fetch, and picn-nfn executables (and repo/pushrepo if
-straightforward). Async main:
-  try: await node.start_...(); await wait_forever_or_event()
-  finally: await node.stop_...()
+straightforward). Async main (single node -- one asyncio.run):
+  try: await node.start_*_async(); await wait_forever_or_event()
+  finally: await node.stop_*_async()
 Install SIGINT/SIGTERM handlers that trigger stop. Sync path
 unchanged. Smoke-test by importing and running start/stop in
 pytest with runtime=async where practical -- do not require
@@ -2376,10 +2380,12 @@ accept runtime=async; minimal test or scripted verify.
 
 ```
 Wire SimulationsTutorial (default gate) to construct forwarders with
-runtime=async. SimulationBus may remain sync (Phase 3
-SimulationInterface.register + stack executor). Verify the tutorial's
-basic exchange completes under asyncio.run. Record which scenario
-was used in docs/baseline.md.
+runtime=async. CRITICAL: multi-node simulations must use ONE shared
+event loop -- start every async node as a task on that loop; do NOT
+call asyncio.run() per forwarder. SimulationBus may remain sync
+(Phase 3 SimulationInterface.register + stack executor). Verify the
+tutorial's basic exchange completes. Record which scenario was used
+in docs/baseline.md.
 ```
 
 **Verify:**
