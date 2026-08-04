@@ -12,6 +12,7 @@ unchanged until Phase 4 migrates them one at a time.
 """
 
 import asyncio
+import concurrent.futures
 from typing import List, Optional
 
 from PiCN.Logger import Logger
@@ -21,6 +22,10 @@ from PiCN.Processes.AsyncLayerProcess import SHUTDOWN_TIMEOUT, AsyncLayerProcess
 # Replace once per-queue depth has been measured under a representative run.
 DEFAULT_QUEUE_SIZE = 128
 
+# Default worker count for the stack-owned executor (ADR-009). Sized for a
+# handful of concurrent blocking I/O / CPU dispatches, not one-per-layer.
+DEFAULT_EXECUTOR_WORKERS = 4
+
 
 class AsyncLayerStack(object):
     """
@@ -28,15 +33,20 @@ class AsyncLayerStack(object):
     asyncio.Queue pairs connecting them.
     """
 
-    def __init__(self, layers: List[AsyncLayerProcess], queue_size: int = DEFAULT_QUEUE_SIZE):
+    def __init__(self, layers: List[AsyncLayerProcess], queue_size: int = DEFAULT_QUEUE_SIZE,
+                 executor_workers: int = DEFAULT_EXECUTOR_WORKERS):
         """
         Create a layer stack from a list of layers, where the topmost layer is the first element in the list.
         :param layers: List of layers to stack onto each other.
         :param queue_size: maxsize applied to every asyncio.Queue this stack creates (ADR-005).
                             Every queue is bounded; there is no way to construct an unbounded one here.
+        :param executor_workers: max_workers for the ThreadPoolExecutor created at start_all()
+                            (ADR-009). The pool itself is not created in __init__.
         """
         self.logger = Logger("AsyncLayerStack", 255)
         self.queue_size = queue_size
+        self._executor_workers = executor_workers
+        self._executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         self.layers: List[AsyncLayerProcess] = []
         self.queues: List[asyncio.Queue] = []
         self._tasks: List[asyncio.Task] = []
@@ -69,6 +79,11 @@ class AsyncLayerStack(object):
         self.layers[0].queue_from_higher = self.queue_from_higher
         self.layers[len(self.layers) - 1].queue_to_lower = self.queue_to_lower
         self.layers[len(self.layers) - 1].queue_from_lower = self.queue_from_lower
+
+    @property
+    def executor(self) -> Optional[concurrent.futures.ThreadPoolExecutor]:
+        """The stack-owned executor, or None before start_all() / after shutdown."""
+        return self._executor
 
     def insert(self, layer: AsyncLayerProcess, on_top_of: AsyncLayerProcess = None, below_of: AsyncLayerProcess = None):
         """
@@ -109,13 +124,29 @@ class AsyncLayerStack(object):
                 return
         raise ValueError('Reference layer is not in the layer stack.')
 
+    def _inject_executor(self, layer: AsyncLayerProcess) -> None:
+        """Give layer the stack executor if it opts in (ADR-009). Layers without
+        an executor attribute or set_executor method are left alone -- not every
+        layer needs one (e.g. PacketEncoding)."""
+        set_executor = getattr(layer, "set_executor", None)
+        if callable(set_executor):
+            set_executor(self._executor)
+            return
+        if hasattr(layer, "executor"):
+            layer.executor = self._executor
+
     def start_all(self) -> None:
         """
         Start every layer's run loop as a supervised asyncio.Task (ADR-007).
+        Creates the stack-owned executor first (ADR-009), then starts tasks.
         Must be called from within a running event loop.
         """
         self.__started = True
+        # Startup order (ADR-009): create the executor -> start layer tasks.
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._executor_workers)
         for layer in self.layers:
+            self._inject_executor(layer)
             task = layer.start()
             task.add_done_callback(self._on_layer_done)
             self._tasks.append(task)
@@ -143,10 +174,14 @@ class AsyncLayerStack(object):
     async def stop_all(self, timeout: float = SHUTDOWN_TIMEOUT) -> None:
         """
         Cancel every layer's task and wait for all of them to finish, bounded
-        by a single timeout for the whole stack (ADR-006). A no-op if
+        by a single timeout for the whole stack (ADR-006). Then shut down the
+        stack executor (ADR-009: after tasks stop, never before). A no-op if
         start_all() was never called.
         """
         if not self._tasks:
+            if self._executor is not None:
+                self._executor.shutdown(wait=True)
+                self._executor = None
             return
         for task in self._tasks:
             task.cancel()
@@ -163,7 +198,10 @@ class AsyncLayerStack(object):
                 "stop_all() timed out after %.1fs; %d layer task(s) did not "
                 "stop: %s", timeout, len(stuck), stuck,
             )
-
+        # Shutdown order (ADR-009): cancel -> await layers -> then executor.
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+            self._executor = None
     # NOTE: LayerStack's equivalent setters below assign via "self.queue_to_higher
     # = queue" inside the queue_to_higher setter itself -- a pre-existing infinite
     # recursion bug in the multiprocessing version, never triggered because nothing
