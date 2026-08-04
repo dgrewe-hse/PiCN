@@ -95,7 +95,12 @@ class SimulationInterface(BaseInterface):
                 # receive("relay") already does exactly the unpacking this
                 # needs (queue_from_bus's [addr, data] shape -> (packet,
                 # addr)) -- reused rather than re-derived.
-                packet, addr = await loop.run_in_executor(executor, self.receive, "relay")
+                try:
+                    packet, addr = await loop.run_in_executor(
+                        executor, self.receive, "relay")
+                except (OSError, ValueError, TypeError, EOFError, BrokenPipeError):
+                    # queue closed during shutdown (Phase 5 async ProgramLibs).
+                    return
                 await queue.put((packet, addr, interface_id))
 
         self._register_task = asyncio.create_task(_pump(), name=f"SimulationInterface-{interface_id}")

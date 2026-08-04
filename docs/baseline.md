@@ -417,3 +417,41 @@ python -m pytest -v --timeout=90 -p no:cacheprovider
 515 → 548 (+33), accounted for by new async/characterization/executor tests
 across layers plus `AsyncLayerStack` executor tests. Every existing
 ProgramLib path still uses sync wrappers and remains green.
+
+## After Phase 5 (Tasks 5.0–5.8)
+
+Shared builders with `runtime=sync|async` (default sync). Async path uses
+plain in-process CS/FIB/PIT/FaceIDTable, `AsyncLayerStack`,
+`AsyncBasicLinkLayer`, and `AsyncMgmt` in the same event loop.
+
+### Delivered
+
+| Area | Notes |
+|---|---|
+| `AsyncBasicLinkLayer` + `ProgramLibs.runtime` | Task 5.0 |
+| `AsyncMgmt` | Task 5.1 |
+| `ICNForwarder` / `Fetch` / `NFNForwarder` / repos | Tasks 5.2–5.5; `*_async` start/stop |
+| Executables `--runtime` | `ICNForwarder`, `NFNForwarder`, `Fetch` (Task 5.6) |
+| Simulation gate | `SimulationsTutorial_async.py` — NFN exchange on one shared loop (Task 5.7) |
+
+### Explicitly deferred
+
+- **`NFNForwarderData` async** — `DataOffloadingChunklayer` has no
+  `AsyncLayerProcess` wrapper yet; `runtime=async` raises
+  `NotImplementedError`. Sync path unchanged.
+
+### ADR greps
+
+```
+grep -rn "AsyncICNForwarder\|AsyncNFNForwarder" PiCN/ProgramLibs/
+# empty
+
+# async builders construct tables via make_forwarding_tables(ASYNC) /
+# plain constructors; sync path still uses create_manager
+```
+
+### Simulation scenario used
+
+`PiCN/Simulations/SimulationsTutorial_async.py` (mirrors
+`SimulationsTutorial.py`): two `NFNForwarder` + `Fetch` on
+`SimulationBus`, result `HelloWorld`.

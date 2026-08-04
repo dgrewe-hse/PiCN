@@ -76,6 +76,9 @@ class AsyncMgmt(object):
             return
         self._server = await asyncio.start_server(
             self._handle_client, "127.0.0.1", self._port)
+        # port=0 -> OS-assigned ephemeral port (matches sync Mgmt.bind behaviour)
+        if self._server.sockets:
+            self._port = self._server.sockets[0].getsockname()[1]
         self._serve_task = asyncio.create_task(
             self._server.serve_forever(), name="AsyncMgmt-serve")
 

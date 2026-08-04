@@ -2425,13 +2425,13 @@ grep -A15 "After Phase 5" docs/baseline.md
 
 Do not start Phase 6 until **all** are true:
 
-- [ ] Shared builders exist; default runtime remains sync
-- [ ] Async runtime uses plain in-process tables (no Manager)
-- [ ] `AsyncMgmt` + `AsyncBasicLinkLayer` in the node event loop
-- [ ] `picn-relay`, `picn-fetch`, NFN forwarder work e2e under async
-- [ ] `NFNForwarderData` included (or explicitly deferred in baseline)
-- [ ] At least one simulation runs under async ProgramLibs
-- [ ] `docs/baseline.md` has "After Phase 5"; no ProgramLib regressions
+- [x] Shared builders exist; default runtime remains sync
+- [x] Async runtime uses plain in-process tables (no Manager)
+- [x] `AsyncMgmt` + `AsyncBasicLinkLayer` in the node event loop
+- [x] `picn-relay`, `picn-fetch`, NFN forwarder work e2e under async
+- [x] `NFNForwarderData` included (or explicitly deferred in baseline)
+- [x] At least one simulation runs under async ProgramLibs
+- [x] `docs/baseline.md` has "After Phase 5"; no ProgramLib regressions
       on the sync default path
 
 ---
