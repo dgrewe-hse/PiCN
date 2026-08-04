@@ -10,7 +10,14 @@ from typing import Any, Literal
 
 @dataclass(frozen=True)
 class Outbound:
-    """One packet to emit toward a neighbouring layer."""
+    """One packet to emit toward a neighbouring layer.
 
-    direction: Literal["lower", "higher"]
+    ``direction`` values:
+    - ``\"lower\"`` / ``\"higher\"``: the handler's ``to_lower`` / ``to_higher`` args
+    - ``\"queue_lower\"`` / ``\"queue_higher\"``: the layer's instance queues
+      (used where the observed sync code put on ``self.queue_to_*`` rather
+      than the handler arguments -- see ICNLayer).
+    """
+
+    direction: Literal["lower", "higher", "queue_lower", "queue_higher"]
     item: Any
