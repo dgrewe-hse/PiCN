@@ -21,6 +21,7 @@ a verification command.
 | 5 | ADR-004 (and its 2026-08-04 shared-builder addendum), ADR-006, ADR-009 |
 | 6 | ADR-004 (Phase 6 dual-runtime addendum), ADR-002 (retained), ADR-008 |
 | 7 | ADR-010, ADR-001 (baseline comparison) |
+| 8 | ADR-010, ADR-001 |
 
 ---
 
@@ -2894,17 +2895,272 @@ Do not start Phase 8 coverage work as a gate until **all** are true:
 
 ---
 
-# Phase 8 — expand before use
+# Phase 8 — Coverage completion
 
-| Phase | Theme | Governing ADRs | Expand when |
-|---|---|---|---|
-| 8 | Coverage completion (runs continuously) | 010 | Phase 7 exits |
+**Purpose:** close the concrete coverage gaps listed in
+`docs/modernization.md` Phase 8 (and defer with reasons anything out of
+scope). Continuous by nature — do not rewrite the suite; add focused tests.
 
-### Rules that carry forward
+**Commit policy:** one planning + inventory commit; then one commit per
+gap task (or small groups); final baseline commit.
 
-- Later “true” scaffolding deletion needs a phase that retires
-  `runtime=sync` first — do not conflate with Phase 6.
-- Phase 8 fills coverage gaps; it is continuous, not a single gate.
+> **Read first:** [ADR-010](design-adrs/ADR-010-async-test-strategy.md),
+> [ADR-001](design-adrs/ADR-001-baseline-first-migration.md).
+> Do **not** change forwarding/packet semantics except to fix a proven
+> dead setter/API bug required by a test (document in baseline).
+
+### Task 8.0 — Inventory gaps vs modernization list
+
+**Goal:** map each modernization Phase 8 bullet to COVERED / GAP / DEFER
+with measured coverage evidence.
+
+**Files:** `docs/baseline.md` only ("Phase 8 inventory").
+
+**Prompt:**
+
+```
+Run coverage on Layers+LayerStack+Processes+ProgramLibs+Mgmt (ignore
+Simulations). Under "Phase 8 inventory" in docs/baseline.md, for each
+modernization.md Phase 8 candidate record:
+- COVERED (existing tests + approx module %)
+- GAP (what to add in Tasks 8.1+)
+- DEFER (reason)
+
+Candidates: PIT expiry/timeout; CS eviction/ageing; FIB LPM edge cases;
+face/interface failure; chunking boundaries; clean shutdown/cancellation;
+malformed packet encoding.
+
+Also note TOTAL % as the Phase 8 starting point.
+```
+
+**Verify:**
+```bash
+grep -A50 "Phase 8 inventory" docs/baseline.md | head -55
+```
+
+**Expect:** every candidate classified; TOTAL recorded.
+
+---
+
+### Task 8.1 — PIT ageing / timeout
+
+**Goal:** unit-test `PendingInterstTableMemoryExact.ageing` retransmit vs
+remove paths; fix broken `PendingInterestTableEntry.timestamp` setter if
+it is a no-op (assign `self._timestamp = timestamp`).
+
+**Files:**
+`PiCN/Layers/ICNLayer/PendingInterestTable/BasePendingInterestTable.py`,
+`PiCN/Layers/ICNLayer/PendingInterestTable/test/test_PendingInterestTableMemoryExact.py`
+
+**Prompt:**
+
+```
+1. If PendingInterestTableEntry.timestamp setter does not assign
+   self._timestamp, fix it (one-line bugfix). Document in the test
+   docstring or a one-line comment at the setter.
+2. Add tests: (a) entry past timeout with retransmits > limit is removed;
+   (b) entry past timeout with retransmits <= limit is updated (retransmit
+   incremented) and remains in the table; (c) fresh entry is updated not
+   removed. Use set_pit_timeout(small) and set timestamp in the past —
+   no time.sleep. Match existing unittest style in that file.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ICNLayer/PendingInterestTable/ -q --timeout=30
+```
+
+**Expect:** all pass including new ageing tests.
+
+---
+
+### Task 8.2 — CS ageing / eviction
+
+**Goal:** unit-test `ContentStoreMemoryExact.ageing` removes expired
+non-static entries and keeps static ones.
+
+**Files:**
+`PiCN/Layers/ICNLayer/ContentStore/test/test_ContentStoreMemoryExact.py`
+
+**Prompt:**
+
+```
+Add tests for ageing(): expired non-static entry removed; static entry
+kept despite old timestamp; non-expired entry kept. Use set_cs_timeout
+and entry.timestamp = past — no sleep.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ICNLayer/ContentStore/test/test_ContentStoreMemoryExact.py -q --timeout=30
+```
+
+**Expect:** all pass.
+
+---
+
+### Task 8.3 — FIB LPM edge cases
+
+**Goal:** cover empty name, single-component name, and overlapping
+prefixes beyond the existing longest-match tests.
+
+**Files:**
+`PiCN/Layers/ICNLayer/ForwardingInformationBase/test/test_ForwardingInformationBasePrefix.py`
+
+**Prompt:**
+
+```
+Add tests: Name() empty has no match (or matches only an empty-prefix
+entry if one was added); single-component Name("/a") LPM; overlapping
+prefixes /a vs /a/b vs /a/b/c pick the longest. Do not change FIB code
+unless a test exposes a crash on empty Name — then skip or handle
+minimally and document.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ICNLayer/ForwardingInformationBase/ -q --timeout=30
+```
+
+**Expect:** all pass.
+
+---
+
+### Task 8.4 — Chunking boundary conditions
+
+**Goal:** exact-multiple of chunk size and single-byte payload through
+`SimpleContentChunkifyer`.
+
+**Files:**
+`PiCN/Layers/ChunkLayer/Chunkifyer/test/test_SimpleContentChunkifyer.py`
+
+**Prompt:**
+
+```
+With a small chunksize (e.g. 8), test: payload length exactly N*chunksize
+produces N chunks and reassembles; payload length 1 produces one chunk
+and reassembles. Assert chunk count and reassembly equality.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/ChunkLayer/Chunkifyer/ -q --timeout=30
+```
+
+**Expect:** all pass.
+
+---
+
+### Task 8.5 — Malformed packet encoding
+
+**Goal:** `NdnTlvEncoder.decode` returns `UnknownPacket` for garbage /
+truncated / unknown-type wire data.
+
+**Files:**
+`PiCN/Layers/PacketEncodingLayer/Encoder/test/test_NdnTlvEncoder.py`
+
+**Prompt:**
+
+```
+Add tests decoding: empty bytes; random non-TLV bytes; truncated Interest
+TLV (valid type byte then garbage). Assert isinstance(..., UnknownPacket).
+Do not change encoder behaviour.
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/PacketEncodingLayer/Encoder/test/test_NdnTlvEncoder.py -q --timeout=30
+```
+
+**Expect:** all pass.
+
+---
+
+### Task 8.6 — Face/interface failure after close
+
+**Goal:** UDP4Interface after `close()` fails send/receive cleanly
+(OSError or equivalent); no reconnect API — document DEFER for
+reconnection.
+
+**Files:**
+`PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface.py`,
+`docs/baseline.md` (one DEFER line under Phase 8 if not already)
+
+**Prompt:**
+
+```
+Add test: close interface then send() and/or receive() raises OSError
+(or socket.error). Optional: close twice does not crash. Document in
+baseline that reconnection is deferred (no production reconnect API).
+```
+
+**Verify:**
+```bash
+python -m pytest PiCN/Layers/LinkLayer/Interfaces/test/test_UDP4Interface.py -q --timeout=30
+```
+
+**Expect:** all pass.
+
+---
+
+### Task 8.7 — Shutdown/cancellation (confirm COVERED)
+
+**Goal:** confirm AsyncLayerStack stop/cancel tests already satisfy the
+modernization bullet; no new tests unless a hole is found.
+
+**Files:** `docs/baseline.md` only (mark COVERED with test file refs).
+
+**Prompt:**
+
+```
+Cite test_AsyncLayerStack.py / test_AsyncLayerProcess.py coverage of
+stop_all timeout, sibling cancel, normal shutdown. Mark that Phase 8
+bullet COVERED in the inventory. Do not add redundant tests.
+```
+
+**Verify:**
+```bash
+grep -A5 "shutdown\|cancellation" docs/baseline.md | head -20
+```
+
+**Expect:** COVERED with file references.
+
+---
+
+### Task 8.8 — After Phase 8 baseline + exit criteria
+
+**Goal:** re-measure coverage; write After Phase 8; tick modernization
+and agent-tasks exit criteria.
+
+**Files:** `docs/baseline.md`, `docs/modernization.md`,
+`docs/agent-tasks.md` (exit checkboxes).
+
+**Prompt:**
+
+```
+Re-run the same coverage command as 8.0. Write "After Phase 8" with new
+TOTAL %, which gaps closed, which deferred. Tick modernization Phase 8
+bullets that are addressed. Tick Phase 8 exit criteria below.
+```
+
+**Verify:**
+```bash
+grep -A25 "After Phase 8" docs/baseline.md | head -30
+grep -A12 "Phase 8 exit criteria" docs/agent-tasks.md
+```
+
+**Expect:** TOTAL ≥ starting point; exit criteria ticked.
+
+---
+
+## Phase 8 exit criteria
+
+- [x] Every modernization Phase 8 candidate is COVERED, tested in 8.1–8.6,
+      or explicitly DEFERred with reason in baseline
+- [x] Aggregate coverage on Layers+LayerStack+Processes+ProgramLibs+Mgmt
+      is at or above the Phase 8 inventory starting TOTAL
+- [x] `docs/baseline.md` has After Phase 8
+- [x] No unexplained suite regressions from the new tests
 
 ---
 

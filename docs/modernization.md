@@ -279,16 +279,16 @@ comparison documented and showing no unexplained regressions.
 
 Open-ended by nature, and safe to run continuously rather than as a gate.
 
-- [ ] Fill coverage gaps identified during migration. Likely candidates, based
+- [x] Fill coverage gaps identified during migration. Likely candidates, based
       on the current structure:
-  - PIT expiry and timeout paths
-  - Content Store eviction behaviour
-  - FIB longest-prefix matching edge cases (empty names, single component,
+  - [x] PIT expiry and timeout paths
+  - [x] Content Store eviction behaviour
+  - [x] FIB longest-prefix matching edge cases (empty names, single component,
     overlapping prefixes)
-  - Face/interface failure and reconnection handling
-  - Chunking boundary conditions (exact-multiple sizes, single-byte payloads)
-  - Clean shutdown and cancellation under load
-  - Malformed packet handling at the encoding layer
+  - [x] Face/interface failure (post-close); reconnection **deferred** (no API)
+  - [x] Chunking boundary conditions (exact-multiple sizes, single-byte payloads)
+  - [x] Clean shutdown and cancellation under load (covered in Phase 2)
+  - [x] Malformed packet handling at the encoding layer
 
 **Exit criteria:** coverage meaningfully above the Phase 0 baseline, with the
 gap list above addressed or explicitly deferred with reasons.

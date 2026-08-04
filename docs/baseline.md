@@ -602,3 +602,41 @@ python -m pytest PiCN/ --ignore=PiCN/Simulations -q --timeout=90 -p no:cacheprov
 Phases 2–6. The old 5 hard failures became 4 clean skips + remaining Fetch
 timing flakes (CI reruns mitigate). Protocol behaviour covered by layer unit
 tests remains green.
+
+## Phase 8 inventory
+
+Starting aggregate (Layers + LayerStack + Processes + ProgramLibs + Mgmt,
+ignore Simulations), 2026-08-04: **TOTAL 83%** (15462 stmts / 2608 miss).
+
+| modernization.md candidate | Status | Evidence / plan |
+|---|---|---|
+| PIT expiry and timeout paths | **GAP** → Task 8.1 | `PendingInterestTableMemoryExact.ageing` lines uncovered; no ageing unit tests |
+| Content Store eviction / ageing | **GAP** → Task 8.2 | `ContentStoreMemoryExact.ageing` uncovered; CS tests never call ageing |
+| FIB LPM edge cases | **GAP** → Task 8.3 | Longest-match exists; empty / single-component / deeper overlap missing |
+| Face/interface failure + reconnection | **GAP** (failure → 8.6) / **DEFER** (reconnect: no production reconnect API) |
+| Chunking boundary conditions | **GAP** → Task 8.4 |
+| Clean shutdown / cancellation under load | **COVERED** — `LayerStack/test/test_AsyncLayerStack.py`, `Processes/test/test_AsyncLayerProcess.py` (stop_all timeout, sibling cancel, normal shutdown; Phase 2) |
+| Malformed packet encoding | **GAP** → Task 8.5 |
+
+Unrelated low coverage (not in modernization Phase 8 list; left alone):
+`ICNPushRepository`, `Flic*` / `flic.py`, `NdnTlvPrinter`,
+`NFNPythonExecutorStreaming`, PushRepository layers, most Autoconfig.
+
+## After Phase 8 (Tasks 8.0–8.8)
+
+Closed the modernization.md Phase 8 gap list with focused unit tests.
+Aggregate coverage: **83% → 84%** (15591 stmts / 2565 miss).
+
+| Candidate | Outcome |
+|---|---|
+| PIT expiry / timeout | Tests + fixed no-op `PendingInterestTableEntry.timestamp` setter |
+| CS eviction / ageing | `ContentStoreMemoryExact` ageing tests (expired / static / fresh) |
+| FIB LPM edges | Empty name (documents unreachable empty-prefix lookup), single component, overlapping longest match |
+| Face failure | `UDP4Interface` send-after-close + idempotent close; **reconnect deferred** (no API) |
+| Chunk boundaries | Exact multiple of chunksize + single-byte payload |
+| Shutdown / cancel | Already COVERED (Phase 2 async stack tests) |
+| Malformed encoding | `NdnTlvEncoder.decode` → `UnknownPacket` for empty / garbage / truncated Interest |
+
+**Note:** empty `Name()` never matches via `find_fib_entry` because the LPM
+loop iterates `range(len(components))` (zero iterations). Behaviour left
+unchanged; asserted explicitly.
