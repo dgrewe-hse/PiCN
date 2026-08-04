@@ -2086,12 +2086,12 @@ grep -A20 "After Phase 4" docs/baseline.md
 
 Do not start Phase 5 until **all** are true:
 
-- [ ] `AsyncLayerStack` owns exactly one executor; layers never create one
-- [ ] Every Phase-4 layer has `*Core` + sync wrapper + `Async*` wrapper
-- [ ] No `*Core.py` touches queues
-- [ ] Existing sync/ProgramLib tests still pass
-- [ ] Each async wrapper has tests
-- [ ] `docs/baseline.md` has "After Phase 4"
+- [x] `AsyncLayerStack` owns exactly one executor; layers never create one
+- [x] Every Phase-4 layer has `*Core` + sync wrapper + `Async*` wrapper
+- [x] No `*Core.py` touches queues
+- [x] Existing sync/ProgramLib tests still pass
+- [x] Each async wrapper has tests
+- [x] `docs/baseline.md` has "After Phase 4"
 
 ---
 

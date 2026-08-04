@@ -374,3 +374,46 @@ criterion) also run standalone at each task boundary throughout this phase:
 consistently unaffected, confirming `SyncRunStrategy`-driven `BasicLinkLayer`
 -- i.e. every existing `ProgramLib` -- is byte-for-byte unaffected by
 everything added this phase.
+
+---
+
+## After Phase 4 (Tasks 4.0–4.9)
+
+Extract-core migration for every remaining layer (ADR-003's 2026-08-04
+addendum): each layer gains a non-process `*Core` returning `List[Outbound]`,
+keeps a thin sync `LayerProcess` wrapper for ProgramLibs, and adds an
+`AsyncLayerProcess` wrapper. `AsyncLayerStack` owns the stack
+`ThreadPoolExecutor` (ADR-009). No ProgramLib is wired to an async wrapper
+yet (Phase 5).
+
+### ADR grep verifications
+
+| # | Check | Result |
+|---|---|---|
+| 1 | No `to_lower.put` / `to_higher.put` in `*Core.py` | empty |
+| 2 | `ThreadPoolExecutor` outside tests | only `AsyncLayerStack` (construction) and Phase-3 `AsyncRunStrategy` (temporary exception) |
+| 3 | `async def data_from_lower` per migrated async wrapper | PacketEncoding, ICN, Chunk, Repository, TimeoutPrevention, NFN, Thunk, Routing, Autoconfig (×3), plus LinkLayer `_LinkLayerEngine` |
+
+Cores present: PacketEncoding, ICN, Chunk, Repository, TimeoutPrevention, NFN,
+Thunk, Routing, Autoconfig.
+
+### Regression caught and fixed mid-phase
+
+`BasicNFNLayer.optimizer` was exposed as a read-only property after extract-core;
+`NFNForwarder` assigns `nfnlayer.optimizer = ThunkPlanExecutor(...)` and all
+four `NFNForwarderThunks` tests failed. Restored the setter (and the sync ICN
+ageing `except Exception` path for Timer-after-teardown). Verified:
+`test_NFNForwarderThunks` 4/4 pass.
+
+### Full-suite run
+
+```
+python -m pytest -v --timeout=90 -p no:cacheprovider
+548 collected, 544 passed, 4 failed, in 657s (0:10:56)
+```
+
+**No regressions vs Phase 3.** Same 4 known native-code failures
+(`test_x86Executor.py` ×2, `test_FetchNFN.py` native-code ×2). Collected
+515 → 548 (+33), accounted for by new async/characterization/executor tests
+across layers plus `AsyncLayerStack` executor tests. Every existing
+ProgramLib path still uses sync wrappers and remains green.
