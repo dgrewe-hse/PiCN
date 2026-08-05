@@ -53,6 +53,11 @@ from agentic.agentic_layer.naming import (
     issuer_digest_matches,
     parse_capability_name,
 )
+from agentic.agentic_layer.producer import (
+    CapabilityProducerHub,
+    QuoteIdProvider,
+    RegisteredProducer,
+)
 from agentic.agentic_layer.runtime import SyncRuntimeNotSupported, require_async_runtime
 from agentic.agentic_layer.steer import (
     MAX_STEERS_PER_SUBINTENT,
@@ -78,12 +83,15 @@ __all__ = [
     "CapabilityDescriptor",
     "CapabilityFIB",
     "CapabilityNamingError",
+    "CapabilityProducerHub",
     "ContextPIT",
     "ContextPitEntry",
     "ContextPitLeaf",
     "MatchConstraints",
     "ParsedCapabilityName",
     "QuorumPolicy",
+    "QuoteIdProvider",
+    "RegisteredProducer",
     "SteerRejected",
     "SubIntent",
     "SyncRuntimeNotSupported",
