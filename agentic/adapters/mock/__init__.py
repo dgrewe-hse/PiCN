@@ -7,5 +7,14 @@
 """In-memory substrate adapter for unit and integration tests.
 
 Provides deterministic delivery, injectable failures, and controllable
-response ordering without a network or a PiCN stack.
+response ordering without a network or a stack adapter.
 """
+
+from agentic.adapters.mock.clock import Clock, ManualClock
+from agentic.adapters.mock.port import MockSubstratePort
+
+__all__ = [
+    "Clock",
+    "ManualClock",
+    "MockSubstratePort",
+]
