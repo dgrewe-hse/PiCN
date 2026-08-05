@@ -39,11 +39,12 @@ dev = [
     "pytest-cov",
     "mypy",
     "hypothesis",
+    "cryptography",
 ]
 # Needed only when using picn-relay -c/--config (TOML config files)
 config = ["pytoml"]
 # Agentic binding extras — LLM clients stay out of the forwarding path (AC3).
-agentic = ["pydantic-ai"]
+agentic = ["pydantic-ai", "cryptography"]
 
 [project.scripts]
 # No console scripts — entry points live in starter/ and ProgramLibs/
@@ -83,6 +84,10 @@ exclude = [
 module = ["PiCN.*", "PiCNExternal.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["cryptography.*"]
+ignore_missing_imports = true
 
 # AsyncLayerProcess is untyped upstream; allow subclassing without weakening
 # strict checks on our own code.
