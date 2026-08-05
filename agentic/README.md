@@ -79,11 +79,11 @@ is separate from the PiCN stack workflow (`ci.yml`).
 
 ## Status
 
-Phase A foundations:
+Phases A–C (through Steer):
 
-- Package skeleton and architectural contracts (AC1–AC6) — done
-- Substrate port Protocol, closed event union, and error families — done
-- Mock adapter (in-memory, ordered delivery, failure injection) — done
-- `AgenticLayer` skeleton + capability naming + NFN upward pass-through — done
+- Package skeleton and architectural contracts (AC1–AC6)
+- Substrate port, mock adapter, `AgenticLayer` + capability naming
+- Signed artefacts, capability descriptors, C-FIB
+- Bounded decomposer + `AgenticSteer` (allow-listed mid-flight mutation)
 
-Next: Phase B continued (capability descriptors, C-FIB).
+Next: Phase D (Context PIT, Merkle trace root).
