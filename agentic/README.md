@@ -12,6 +12,7 @@ never depends on an LLM client.
 Public documentation lives under [`docs/`](../docs/):
 
 * [Architecture](../docs/agentic.md)
+* [Demo and measurements](../docs/agentic_demo.md) · [`demo/`](../demo/)
 * [Hello agent](../docs/hello_agent.md)
 * [Bindings](../docs/agentic_bindings.md) · [Port](../docs/agentic_port.md) ·
   [Messages](../docs/agentic_messages.md) · [Config](../docs/agentic_config.md)
@@ -83,3 +84,10 @@ Track 1 (M1–M6) mechanisms plus Phase G wiring:
 * Reputation, attestation, accountability log
 * Capability backends (deterministic + Pydantic AI / `TestModel`)
 * Cardiac scenario, measurement harness, exit-criteria invariant catalog
+* ComMag demo package (`demo/`) — walkthrough, sweeps, SimulationBus paired M3
+
+## Future work
+
+* **Agentic management surface** — `AsyncMgmt` does not expose agentic state
+  (capabilities, C-FIB, Context PIT, reputation, accountability log). Needed
+  for operators; not part of Track 1. See `docs/agentic.md`.

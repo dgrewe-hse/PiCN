@@ -50,6 +50,23 @@ class RunConfig:
     path: str = "happy"
 
 
+def _metrics_dict(metrics: MetricsSnapshot) -> dict[str, Any]:
+    return {
+        "transport": metrics.transport,
+        "m1_latency_ms": metrics.m1_latency_ms,
+        "m2_message_count": metrics.m2_message_count,
+        "m2_message_bytes": metrics.m2_message_bytes,
+        "m3_overhead_ratio": metrics.m3_overhead_ratio,
+        "m3_publishable": metrics.m3_publishable,
+        "m4_detection_rate": metrics.m4_detection_rate,
+        "m5_scale_latency_by_k": metrics.m5_scale_latency_by_k,
+        "context_pit_peak": metrics.context_pit_peak,
+        "dispatch_count": metrics.dispatch_count,
+        "aggregation_complete": metrics.aggregation_complete,
+        "artefact_bytes_total": metrics.artefact_bytes_total,
+    }
+
+
 @dataclass
 class MeasurementHarness:
     """Run a scenario under metadata/capacity gates; emit raw events + rollups."""
@@ -81,8 +98,78 @@ class MeasurementHarness:
         self.last_metadata = metadata
         return metadata
 
+    def _emit_structural(
+        self,
+        artefacts: dict[str, Any],
+        *,
+        transport: str,
+        seed: int,
+        path: str,
+    ) -> None:
+        """Map scenario structural artefacts onto MetricEvents."""
+        labels = {"path": path}
+        peak = artefacts.get("context_pit_peak")
+        if peak is not None:
+            self.events.append(
+                MetricEvent(
+                    kind="context_pit_peak",
+                    transport=transport,
+                    seed=seed,
+                    value=float(peak),
+                    labels=labels,
+                )
+            )
+        entries = artefacts.get("context_pit_entries")
+        if entries is not None:
+            self.events.append(
+                MetricEvent(
+                    kind="context_pit_entries",
+                    transport=transport,
+                    seed=seed,
+                    value=float(entries),
+                    labels=labels,
+                )
+            )
+        dispatch = artefacts.get("dispatch_count")
+        if dispatch is not None:
+            self.events.append(
+                MetricEvent(
+                    kind="dispatch_count",
+                    transport=transport,
+                    seed=seed,
+                    value=float(dispatch),
+                    labels=labels,
+                )
+            )
+        agg = artefacts.get("aggregation_complete")
+        if agg is not None:
+            self.events.append(
+                MetricEvent(
+                    kind="aggregation_complete",
+                    transport=transport,
+                    seed=seed,
+                    value=float(agg),
+                    labels=labels,
+                )
+            )
+        artefact_bytes = artefacts.get("artefact_bytes")
+        if artefact_bytes is not None:
+            self.events.append(
+                MetricEvent(
+                    kind="artefact_bytes",
+                    transport=transport,
+                    seed=seed,
+                    value=float(artefact_bytes),
+                    labels=labels,
+                )
+            )
+
     async def run(self, config: RunConfig, *, port: Any = None) -> dict[str, Any]:
-        """Execute one scenario path and capture M1–M5 events.
+        """Execute one scenario path and capture measurement events.
+
+        Phase-1 / in-process runs emit agentic latency and structural metrics
+        only. They do **not** emit a synthetic NFN baseline — publishable M3
+        requires a real plain-NFN paired run (see ``demo.run_paired_bus``).
 
         :param port: Optional substrate port injected into the scenario.
         :return: Artefacts including metadata and per-transport metrics.
@@ -107,7 +194,6 @@ class MeasurementHarness:
 
         transport = metadata.transport
         seed = metadata.seed
-        # M1 absolute latency sample (publication restricted for bus — metadata says so).
         self.events.append(
             MetricEvent(
                 kind="latency_sample",
@@ -117,41 +203,37 @@ class MeasurementHarness:
                 labels={"path": config.path},
             )
         )
-        # M2: approximate from accountability log length as message proxy + bytes.
         msg_count = int(artefacts.get("accountability_log_length", 0))
         if "first_exchange" in artefacts:
             msg_count = int(
                 artefacts["first_exchange"].get("accountability_log_length", msg_count)
             )
+        per_msg_bytes = float(artefacts.get("artefact_bytes", 0)) / max(msg_count, 1)
+        if per_msg_bytes <= 0:
+            per_msg_bytes = 64.0
         for _ in range(max(msg_count, 1)):
             self.events.append(
                 MetricEvent(
                     kind="message",
                     transport=transport,
                     seed=seed,
-                    value=64.0,
+                    value=per_msg_bytes,
                     labels={"path": config.path},
                 )
             )
-        # M3: agentic vs a synthetic plain-NFN baseline in the *same* run/transport.
-        nfn_baseline_ms = max(elapsed_ms * 0.5, 1e-6)
-        self.events.append(
-            MetricEvent(
-                kind="nfn_baseline_latency",
-                transport=transport,
-                seed=seed,
-                value=nfn_baseline_ms,
-            )
-        )
+        # Agentic latency only — no synthetic nfn_baseline_latency (M3 gate).
         self.events.append(
             MetricEvent(
                 kind="agentic_latency",
                 transport=transport,
                 seed=seed,
                 value=elapsed_ms,
+                labels={"path": config.path, "mode": "agentic"},
             )
         )
-        # M4 detection efficacy (adversary path records mismatches).
+        self._emit_structural(
+            artefacts, transport=transport, seed=seed, path=config.path
+        )
         if config.path == "adversary":
             mismatches = artefacts.get("kpa_mismatches", [])
             detected = 1.0 if mismatches else 0.0
@@ -164,7 +246,6 @@ class MeasurementHarness:
                     labels={"adversary": True},
                 )
             )
-        # M5 scale point.
         self.events.append(
             MetricEvent(
                 kind="scale_point",
@@ -183,20 +264,13 @@ class MeasurementHarness:
         return {
             "metadata": metadata.to_dict(),
             "artefacts": artefacts,
-            "metrics": {
-                "transport": metrics.transport,
-                "m1_latency_ms": metrics.m1_latency_ms,
-                "m2_message_count": metrics.m2_message_count,
-                "m2_message_bytes": metrics.m2_message_bytes,
-                "m3_overhead_ratio": metrics.m3_overhead_ratio,
-                "m4_detection_rate": metrics.m4_detection_rate,
-                "m5_scale_latency_by_k": metrics.m5_scale_latency_by_k,
-            },
+            "metrics": _metrics_dict(metrics),
             "rollups": {
                 t: {
                     "m1_latency_ms": snap.m1_latency_ms,
                     "m2_message_count": snap.m2_message_count,
                     "m3_overhead_ratio": snap.m3_overhead_ratio,
+                    "m3_publishable": snap.m3_publishable,
                     "m4_detection_rate": snap.m4_detection_rate,
                 }
                 for t, snap in rollup_by_transport(self.events).items()

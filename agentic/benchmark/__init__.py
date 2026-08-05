@@ -17,6 +17,7 @@ from agentic.benchmark.harness import MeasurementHarness, RunConfig
 from agentic.benchmark.metadata import RunMetadata, require_run_metadata
 from agentic.benchmark.metrics import MetricsSnapshot, compute_metrics
 from agentic.benchmark.rollup import rollup_by_transport
+from agentic.benchmark.sweep import SweepSpec, load_jsonl, run_sweep
 
 __all__ = [
     "HarnessError",
@@ -24,8 +25,11 @@ __all__ = [
     "MetricsSnapshot",
     "RunConfig",
     "RunMetadata",
+    "SweepSpec",
     "assert_bus_capacity",
     "compute_metrics",
+    "load_jsonl",
     "require_run_metadata",
     "rollup_by_transport",
+    "run_sweep",
 ]

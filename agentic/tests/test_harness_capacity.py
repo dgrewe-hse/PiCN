@@ -100,7 +100,8 @@ async def test_harness_run_cardiac_happy_on_bus() -> None:
     )
     assert result["metadata"]["transport"] == "bus"
     assert result["metadata"]["seed"] == 42
-    assert result["metrics"]["m3_overhead_ratio"] is not None
+    assert result["metrics"]["m3_publishable"] is False
+    assert result["metrics"]["m3_overhead_ratio"] is None
     assert result["metrics"]["m2_message_count"] >= 1
     assert "bus" in result["rollups"]
 

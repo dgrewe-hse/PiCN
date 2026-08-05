@@ -157,6 +157,10 @@ class CardiacScenario:
         self._desc: CapabilityDescriptor | None = None
         self._claims: list[ClaimSnapshot] = []
         self._mismatched_ids: set[str] = set()
+        self._context_pit_peak: int = 0
+        self._dispatch_count: int = 0
+        self._aggregation_complete: int = 0
+        self._artefact_bytes: int = 0
         # Injected by the harness; never inspected for transport kind.
         self._port: Any = None
 
@@ -198,6 +202,10 @@ class CardiacScenario:
         )
         self._claims.clear()
         self._mismatched_ids.clear()
+        self._context_pit_peak = 0
+        self._dispatch_count = 0
+        self._aggregation_complete = 0
+        self._artefact_bytes = 0
         self._reputation = ReputationTable()
         self._log = AccountabilityLog(node_private_key=self._log_key)
         self._pit = ContextPIT()
@@ -371,41 +379,65 @@ class CardiacScenario:
             leaf_specs=leaf_specs,
             now_ms=self._now_ms(),
         )
+        self._context_pit_peak = max(
+            self._context_pit_peak, self._pit.context_pit_entries
+        )
 
         hospital_leaf_offset = 1
         responses: list[dict[str, Any]] = []
+        dispatch_count = 0
 
         self._pit.mark_forwarded(parent, 0)
-        self._pit.record_response(parent, 0, hashlib.sha256(b"enrichment-ok").digest())
+        dispatch_count += 1
+        enrichment_body = b"enrichment-ok"
+        self._artefact_bytes += len(enrichment_body)
+        self._pit.record_response(parent, 0, hashlib.sha256(enrichment_body).digest())
 
         for index, hospital in enumerate(self._hospitals):
             leaf_index = hospital_leaf_offset + index
             self._pit.mark_forwarded(parent, leaf_index)
+            dispatch_count += 1
             response = await self._issue_hospital_response(
                 hospital, patient_id=patient_id
             )
             responses.append(response)
+            claim_raw = json.dumps(
+                response["claim_body"], separators=(",", ":"), sort_keys=True
+            ).encode()
+            self._artefact_bytes += len(claim_raw)
             self._pit.record_response(parent, leaf_index, response["response_digest"])
 
         traffic_index = hospital_leaf_offset + len(self._hospitals)
         self._pit.mark_forwarded(parent, traffic_index)
+        dispatch_count += 1
         traffic_body = {"eta_s": self._world.traffic_eta_s}
-        traffic_digest = hashlib.sha256(
-            json.dumps(traffic_body, separators=(",", ":"), sort_keys=True).encode()
-        ).digest()
+        traffic_raw = json.dumps(
+            traffic_body, separators=(",", ":"), sort_keys=True
+        ).encode()
+        self._artefact_bytes += len(traffic_raw)
+        traffic_digest = hashlib.sha256(traffic_raw).digest()
         self._pit.record_response(parent, traffic_index, traffic_digest)
 
         ranking_index = traffic_index + 1
         self._pit.mark_forwarded(parent, ranking_index)
+        dispatch_count += 1
         ranking = self._rank_hospitals()
-        ranking_digest = hashlib.sha256(
-            json.dumps(ranking, separators=(",", ":"), sort_keys=True).encode()
-        ).digest()
+        ranking_raw = json.dumps(
+            ranking, separators=(",", ":"), sort_keys=True
+        ).encode()
+        self._artefact_bytes += len(ranking_raw)
+        ranking_digest = hashlib.sha256(ranking_raw).digest()
         self._pit.record_response(parent, ranking_index, ranking_digest)
+
+        self._dispatch_count += dispatch_count
 
         completed = maybe_complete(self._pit, parent, self._now_ms())
         assert completed is not None and completed.terminated
         entry = completed
+        self._aggregation_complete += 1
+        self._context_pit_peak = max(
+            self._context_pit_peak, self._pit.context_pit_entries
+        )
 
         steer_heads = default_steer_heads(len(entry.leaves))
         response_digests = tuple(leaf.response_digest for leaf in entry.leaves)
@@ -442,6 +474,11 @@ class CardiacScenario:
                 for r in responses
             ],
             "accountability_log_length": self._log.length,
+            "context_pit_peak": self._context_pit_peak,
+            "context_pit_entries": self._pit.context_pit_entries,
+            "dispatch_count": self._dispatch_count,
+            "aggregation_complete": self._aggregation_complete,
+            "artefact_bytes": self._artefact_bytes,
         }
 
     async def run_happy_path(self, **kwargs: Any) -> dict[str, Any]:
@@ -461,6 +498,11 @@ class CardiacScenario:
             "beds_at_arrival": outcome.beds_at_arrival,
         }
         artefacts["path"] = "happy"
+        artefacts["context_pit_peak"] = self._context_pit_peak
+        artefacts["context_pit_entries"] = self._pit.context_pit_entries
+        artefacts["dispatch_count"] = self._dispatch_count
+        artefacts["aggregation_complete"] = self._aggregation_complete
+        artefacts["artefact_bytes"] = self._artefact_bytes
         return artefacts
 
     async def run_adversary(self, **kwargs: Any) -> dict[str, Any]:
@@ -540,6 +582,11 @@ class CardiacScenario:
             "accountability_log_length": self._log.length,
             "trace_root_verified_first": first["trace_root_verified"],
             "trace_root_verified_second": second["trace_root_verified"],
+            "context_pit_peak": self._context_pit_peak,
+            "context_pit_entries": self._pit.context_pit_entries,
+            "dispatch_count": self._dispatch_count,
+            "aggregation_complete": self._aggregation_complete,
+            "artefact_bytes": self._artefact_bytes,
         }
 
 
