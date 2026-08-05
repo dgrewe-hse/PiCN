@@ -83,4 +83,5 @@ Phase A foundations in progress:
 
 - Package skeleton and architectural contracts (AC1–AC6) — done
 - Substrate port Protocol, closed event union, and error families — done
-- Mock adapter, `AgenticLayer` skeleton, capability naming — next
+- Mock adapter (in-memory, ordered delivery, failure injection) — done
+- `AgenticLayer` skeleton and capability naming — next
