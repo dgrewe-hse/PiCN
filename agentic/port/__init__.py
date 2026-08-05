@@ -7,5 +7,50 @@
 """Substrate port: typed Protocol and lifecycle events.
 
 Defines the narrow boundary between the agentic layer and any underlying
-forwarder. No ``PiCN`` types belong here — adapters translate at the edges.
+forwarder. No stack-specific types belong here — adapters translate at the edges.
 """
+
+from agentic.port.errors import (
+    AgenticError,
+    AggregationFailed,
+    BoundExceeded,
+    DescriptorInvalid,
+    Malformed,
+    NoTemplateMatched,
+    SubstrateError,
+    TransportClosed,
+    Unreachable,
+)
+from agentic.port.events import (
+    InboundRequest,
+    RequestFailed,
+    RequestSent,
+    RequestTimedOut,
+    ResponseArrived,
+    SubstrateEvent,
+)
+from agentic.port.names import EndpointRef, Match, Name, PrefixTable
+from agentic.port.protocol import SubstratePort
+
+__all__ = [
+    "AgenticError",
+    "AggregationFailed",
+    "BoundExceeded",
+    "DescriptorInvalid",
+    "EndpointRef",
+    "InboundRequest",
+    "Malformed",
+    "Match",
+    "Name",
+    "NoTemplateMatched",
+    "PrefixTable",
+    "RequestFailed",
+    "RequestSent",
+    "RequestTimedOut",
+    "ResponseArrived",
+    "SubstrateError",
+    "SubstrateEvent",
+    "SubstratePort",
+    "TransportClosed",
+    "Unreachable",
+]

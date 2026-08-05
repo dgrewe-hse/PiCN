@@ -79,5 +79,8 @@ is separate from the PiCN stack workflow (`ci.yml`).
 
 ## Status
 
-Package skeleton and architectural enforcement only. Mechanisms (port,
-adapters, layer, trust, binding, scenario, harness) land in follow-up work.
+Phase A foundations in progress:
+
+- Package skeleton and architectural contracts (AC1–AC6) — done
+- Substrate port Protocol, closed event union, and error families — done
+- Mock adapter, `AgenticLayer` skeleton, capability naming — next
