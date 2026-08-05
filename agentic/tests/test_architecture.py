@@ -12,7 +12,9 @@ in CI and fail fast — a contract break is a build failure, not a review note.
 Contracts enforced here (also summarised in ``agentic/README.md``):
 
 * AC1 — ``trust/``, ``scenario/``, ``benchmark/`` import nothing from ``PiCN.*``
-* AC2 — only ``agentic.adapters.picn`` may import ``PiCN.*``
+* AC2 — only ``agentic.adapters.picn`` may import ``PiCN.*`` broadly;
+  ``agentic.agentic_layer`` may import ``PiCN.Processes`` / ``PiCN.Packets``
+  only (async layer wiring)
 * AC3 — no LLM client on the forwarding path
 * AC4 — ``port/`` defines no substrate-specific types
 * AC5 — agentic modules import the port, never adapter internals
@@ -30,9 +32,19 @@ import pytest
 AGENTIC_ROOT = Path(__file__).resolve().parents[1]
 
 # Modules that may import PiCN.* (AC2). Everything else must not.
+# ``agentic.agentic_layer`` is a narrow exception: it subclasses
+# AsyncLayerProcess and may touch packet types, but must not import
+# ``PiCN.Layers.*`` or other stack internals (those stay in adapters.picn).
 PICN_IMPORT_ALLOWLIST = frozenset(
     {
         "agentic.adapters.picn",
+    }
+)
+
+AGENTIC_LAYER_PICN_ALLOWLIST = frozenset(
+    {
+        "PiCN.Processes",
+        "PiCN.Packets",
     }
 )
 
@@ -224,8 +236,24 @@ def test_ac2_only_picn_adapter_imports_picn() -> None:
     for module, path in _all_agentic_modules():
         if any(_module_under(module, allowed) for allowed in PICN_IMPORT_ALLOWLIST):
             continue
+        # Workflow / integration tests may drive a real stack; production
+        # modules remain constrained.
+        if _module_under(module, "agentic.tests"):
+            continue
         for imported in _collect_imports(path):
-            if _imports_match(imported, "PiCN"):
+            if not _imports_match(imported, "PiCN"):
+                continue
+            if _module_under(module, "agentic.agentic_layer"):
+                if any(
+                    _imports_match(imported, allowed)
+                    for allowed in AGENTIC_LAYER_PICN_ALLOWLIST
+                ):
+                    continue
+                violations.append(
+                    f"{module} imports {imported} "
+                    f"(agentic_layer may only import {sorted(AGENTIC_LAYER_PICN_ALLOWLIST)})"
+                )
+            else:
                 violations.append(f"{module} imports {imported}")
     assert violations == [], "AC2 violated:\n" + "\n".join(violations)
 

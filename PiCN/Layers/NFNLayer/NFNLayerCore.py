@@ -82,7 +82,7 @@ class NFNLayerCore:
     def handle_from_higher(self, data) -> NFNCoreResult:
         return NFNCoreResult()
 
-    def handle_from_lower(self, data) -> NFNCoreResult:
+    def handle_from_lower(self, data, has_to_higher: bool = False) -> NFNCoreResult:
         if isinstance(data, list):
             packet_id = data[0]
             packet = data[1]
@@ -93,7 +93,7 @@ class NFNLayerCore:
             self.logger.info(
                 "Got Interest from lower: " + str(packet.name) + "; Face ID: " + str(packet_id)
             )
-            return self.handle_interest(packet_id, packet)
+            return self.handle_interest(packet_id, packet, has_to_higher=has_to_higher)
         if isinstance(packet, Content):
             self.logger.info("Got Content from lower: " + str(packet.name))
             return self.handle_content(packet_id, packet)
@@ -102,7 +102,9 @@ class NFNLayerCore:
             return self.handle_nack(packet_id, packet)
         return NFNCoreResult()
 
-    def handle_interest(self, packet_id: int, interest: Interest) -> NFNCoreResult:
+    def handle_interest(
+        self, packet_id: int, interest: Interest, has_to_higher: bool = False
+    ) -> NFNCoreResult:
         result = NFNCoreResult()
         if self.r2cclient.R2C_identify_Name(interest.name):
             c = self.r2cclient.R2C_handle_request(interest.name, self.computation_table)
@@ -113,7 +115,11 @@ class NFNLayerCore:
                     result.outbounds.append(Outbound("queue_lower", [packet_id, c]))
             return result
         if interest.name.components[-1] != b"NFN":
-            result.outbounds.append(Outbound("queue_lower", [packet_id, interest]))
+            # Pass through unmodified. When a higher layer is present (agentic
+            # on top of NFN), deliver upward; when NFN is topmost, reflect
+            # downward as before. Do not special-case capability names here.
+            direction = "queue_higher" if has_to_higher else "queue_lower"
+            result.outbounds.append(Outbound(direction, [packet_id, interest]))
             return result
         nfn_str, prepended_name = self.parser.network_name_to_nfn_str(interest.name)
         ast = self.parser.parse(nfn_str)
