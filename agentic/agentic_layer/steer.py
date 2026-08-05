@@ -9,16 +9,15 @@
 A distinct agentic-layer message (not a keepalive reuse). A Steer may change
 only ``payload`` and ``constraints.latency_bound``. Attempts to touch the
 expected sub-intent set, aggregation policy, capability name, or credential are
-rejected wholesale. ``NULL_STEER`` and ``append_steer_chain`` feed the Merkle
-leaf value (A-005); Context PIT owns path recomputation.
+rejected wholesale. Applied Steers update ``steer_chain_head`` and refresh the
+Context PIT Merkle leaf (path-local).
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
-from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -32,6 +31,7 @@ from cryptography.hazmat.primitives.serialization import (
     load_der_public_key,
 )
 
+from agentic.agentic_layer.context_pit import ContextPIT, ContextPitEntry
 from agentic.trust.jcs import FloatInSignedBodyError, jcs_dumps
 from agentic.trust.merkle import NULL_STEER
 
@@ -56,63 +56,6 @@ class SteerRejected(ValueError):
     """Raised when an AgenticSteer cannot be applied (wholesale rejection)."""
 
 
-@dataclass
-class InFlightLeaf:
-    """Mutable runtime state for one expected sub-intent leaf.
-
-    :param payload: Current request payload (may be steered).
-    :param latency_bound: Current latency bound (may be steered).
-    :param capability: Immutable capability path for this leaf.
-    :param credential: Immutable credential blob for this leaf.
-    :param steer_count: Number of Steers already applied.
-    :param steer_chain_head: Hash-chain head; Phase D folds this into the Merkle leaf.
-    """
-
-    payload: bytes
-    latency_bound: int | None
-    capability: tuple[str, ...]
-    credential: bytes
-    steer_count: int = 0
-    steer_chain_head: bytes = NULL_STEER
-
-
-@dataclass
-class SteerTargetEntry:
-    """Minimal Context PIT entry surface needed to apply Steers.
-
-    Phase D replaces / extends this with the full Context PIT. Steer must never
-    create entries — only mutate known, non-terminated ones.
-
-    :param parent_intent_digest: Entry key.
-    :param issuer_public_key_der: Original intent issuer (Steer authorisation).
-    :param aggregation_policy: Immutable under Steer.
-    :param expected_subintent_set: Immutable under Steer (canonical leaf ids).
-    :param leaves: Per-leaf mutable runtime state (payload / latency only).
-    :param terminated: When True, Steers are refused.
-    """
-
-    parent_intent_digest: bytes
-    issuer_public_key_der: bytes
-    aggregation_policy: str
-    expected_subintent_set: tuple[str, ...]
-    leaves: list[InFlightLeaf]
-    terminated: bool = False
-
-
-@dataclass
-class SteerStore:
-    """In-memory store of Steer targets (stand-in until Context PIT lands)."""
-
-    _entries: MutableMapping[bytes, SteerTargetEntry] = field(default_factory=dict)
-
-    def get(self, parent_intent_digest: bytes) -> SteerTargetEntry | None:
-        return self._entries.get(parent_intent_digest)
-
-    def put(self, entry: SteerTargetEntry) -> None:
-        """Register an entry created by the intent path — never by a Steer."""
-        self._entries[entry.parent_intent_digest] = entry
-
-
 def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -123,7 +66,7 @@ def _b64url_decode(data: str) -> bytes:
 
 
 def append_steer_chain(previous_head: bytes, steer_canonical: bytes) -> bytes:
-    """Extend the steer hash chain (seam used by Phase D leaf hashing).
+    """Extend the steer hash chain folded into the Merkle leaf.
 
     :param previous_head: Prior chain head (``NULL_STEER`` if never steered).
     :param steer_canonical: Canonical bytes of the applied Steer body.
@@ -238,12 +181,12 @@ def sign_steer(
 
 
 def apply_steer(
-    store: SteerStore,
+    pit: ContextPIT,
     envelope: Mapping[str, Any],
-) -> SteerTargetEntry:
-    """Verify and apply an AgenticSteer to a known, non-terminated entry.
+) -> ContextPitEntry:
+    """Verify and apply an AgenticSteer to a known, non-terminated PIT entry.
 
-    :param store: Entry store (does not create entries).
+    :param pit: Context PIT (does not create entries).
     :param envelope: Signed Steer envelope.
     :return: Updated entry.
     :raises SteerRejected: On any validation / authorisation / state failure.
@@ -294,7 +237,7 @@ def apply_steer(
         decoded["constraints"] = mutations["constraints"]
     _validate_mutations(decoded)
 
-    entry = store.get(parent)
+    entry = pit.get(parent)
     if entry is None:
         raise SteerRejected("unknown parent_intent_digest — Steer creates nothing")
     if entry.terminated:
@@ -315,6 +258,7 @@ def apply_steer(
 
     leaf.steer_chain_head = append_steer_chain(leaf.steer_chain_head, canonical)
     leaf.steer_count += 1
+    pit.refresh_leaf_merkle(entry, leaf_index)
     return entry
 
 
@@ -325,10 +269,7 @@ __all__ = [
     "MAX_STEERS_PER_SUBINTENT",
     "NULL_STEER",
     "AgenticSteer",
-    "InFlightLeaf",
     "SteerRejected",
-    "SteerStore",
-    "SteerTargetEntry",
     "append_steer_chain",
     "apply_steer",
     "build_steer_body",

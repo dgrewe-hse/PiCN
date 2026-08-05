@@ -14,7 +14,27 @@ Stack wiring imports ``PiCN.Processes`` / ``PiCN.Packets`` only; all other
 ``PiCN.*`` imports stay in ``agentic.adapters.picn``.
 """
 
+from agentic.agentic_layer.aggregation import (
+    AllPolicy,
+    BestEffortPolicy,
+    QuorumPolicy,
+    default_steer_heads,
+    fail_closed_if_unsatisfiable,
+    maybe_complete,
+    parse_aggregation_policy,
+    recompute_trace_root,
+    resolved_count,
+    verify_claimed_root,
+    verify_leaf_inclusion,
+)
 from agentic.agentic_layer.cfib import CapabilityFIB, MatchConstraints
+from agentic.agentic_layer.context_pit import (
+    MAX_CONTEXT_PIT_ENTRIES,
+    RESULT_RETENTION_MS,
+    ContextPIT,
+    ContextPitEntry,
+    ContextPitLeaf,
+)
 from agentic.agentic_layer.decomposer import (
     BoundedDecomposer,
     SubIntent,
@@ -38,10 +58,7 @@ from agentic.agentic_layer.steer import (
     MAX_STEERS_PER_SUBINTENT,
     NULL_STEER,
     AgenticSteer,
-    InFlightLeaf,
     SteerRejected,
-    SteerStore,
-    SteerTargetEntry,
     append_steer_chain,
     apply_steer,
     build_steer_body,
@@ -49,20 +66,25 @@ from agentic.agentic_layer.steer import (
 )
 
 __all__ = [
+    "MAX_CONTEXT_PIT_ENTRIES",
     "MAX_STEERS_PER_SUBINTENT",
     "NULL_STEER",
+    "RESULT_RETENTION_MS",
     "AgenticLayer",
     "AgenticSteer",
+    "AllPolicy",
+    "BestEffortPolicy",
     "BoundedDecomposer",
     "CapabilityDescriptor",
     "CapabilityFIB",
     "CapabilityNamingError",
-    "InFlightLeaf",
+    "ContextPIT",
+    "ContextPitEntry",
+    "ContextPitLeaf",
     "MatchConstraints",
     "ParsedCapabilityName",
+    "QuorumPolicy",
     "SteerRejected",
-    "SteerStore",
-    "SteerTargetEntry",
     "SubIntent",
     "SyncRuntimeNotSupported",
     "TaskGraphTemplate",
@@ -71,12 +93,20 @@ __all__ = [
     "build_steer_body",
     "capability_lpm_prefix",
     "capability_name",
+    "default_steer_heads",
     "expected_set_from",
+    "fail_closed_if_unsatisfiable",
     "issuer_digest_from_key",
     "issuer_digest_matches",
     "load_template",
+    "maybe_complete",
+    "parse_aggregation_policy",
     "parse_capability_name",
+    "recompute_trace_root",
     "register_descriptor",
     "require_async_runtime",
+    "resolved_count",
     "sign_steer",
+    "verify_claimed_root",
+    "verify_leaf_inclusion",
 ]

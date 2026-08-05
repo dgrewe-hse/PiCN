@@ -19,6 +19,7 @@ from agentic.port import (
     AgenticError,
     AggregationFailed,
     BoundExceeded,
+    CapacityExhausted,
     DescriptorInvalid,
     EndpointRef,
     InboundRequest,
@@ -153,6 +154,7 @@ def test_agentic_error_family() -> None:
         BoundExceeded,
         DescriptorInvalid,
         AggregationFailed,
+        CapacityExhausted,
     ):
         err = cls(detail="x")
         assert isinstance(err, AgenticError)
