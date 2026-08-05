@@ -15,6 +15,13 @@ Stack wiring imports ``PiCN.Processes`` / ``PiCN.Packets`` only; all other
 """
 
 from agentic.agentic_layer.cfib import CapabilityFIB, MatchConstraints
+from agentic.agentic_layer.decomposer import (
+    BoundedDecomposer,
+    SubIntent,
+    TaskGraphTemplate,
+    expected_set_from,
+    load_template,
+)
 from agentic.agentic_layer.descriptor import CapabilityDescriptor, register_descriptor
 from agentic.agentic_layer.layer import AgenticLayer
 from agentic.agentic_layer.naming import (
@@ -30,16 +37,21 @@ from agentic.agentic_layer.runtime import SyncRuntimeNotSupported, require_async
 
 __all__ = [
     "AgenticLayer",
+    "BoundedDecomposer",
     "CapabilityDescriptor",
     "CapabilityFIB",
     "CapabilityNamingError",
     "MatchConstraints",
     "ParsedCapabilityName",
+    "SubIntent",
     "SyncRuntimeNotSupported",
+    "TaskGraphTemplate",
     "capability_lpm_prefix",
     "capability_name",
+    "expected_set_from",
     "issuer_digest_from_key",
     "issuer_digest_matches",
+    "load_template",
     "parse_capability_name",
     "register_descriptor",
     "require_async_runtime",
