@@ -51,6 +51,11 @@ def available_scenarios() -> dict[str, type]:
 
     Populated as scenario plugins are imported (cardiac, …).
     """
+    # Ensure built-in plugins are registered when the harness asks.
+    try:
+        import agentic.scenario.cardiac  # noqa: F401
+    except ImportError:
+        pass
     return dict(_REGISTRY)
 
 
