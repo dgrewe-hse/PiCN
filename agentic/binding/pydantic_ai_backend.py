@@ -152,7 +152,12 @@ class PydanticAIBackend:
         result = await self._agent.run(prompt)
         output = result.output
         if isinstance(output, BaseModel):
-            return output.model_dump()
+            # model_dump() is typed Any under missing pydantic stubs (CI architecture
+            # job); rebuild an explicit dict[str, Any] for --strict no-any-return.
+            raw: object = output.model_dump()
+            if not isinstance(raw, dict):
+                raise TypeError("model_dump must return a dict")
+            return {str(k): v for k, v in raw.items()}
         if isinstance(output, dict):
             return output
         raise TypeError("agent output must be a mapping or BaseModel")
