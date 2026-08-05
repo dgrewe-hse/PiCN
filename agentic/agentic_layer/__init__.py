@@ -34,18 +34,41 @@ from agentic.agentic_layer.naming import (
     parse_capability_name,
 )
 from agentic.agentic_layer.runtime import SyncRuntimeNotSupported, require_async_runtime
+from agentic.agentic_layer.steer import (
+    MAX_STEERS_PER_SUBINTENT,
+    NULL_STEER,
+    AgenticSteer,
+    InFlightLeaf,
+    SteerRejected,
+    SteerStore,
+    SteerTargetEntry,
+    append_steer_chain,
+    apply_steer,
+    build_steer_body,
+    sign_steer,
+)
 
 __all__ = [
+    "MAX_STEERS_PER_SUBINTENT",
+    "NULL_STEER",
     "AgenticLayer",
+    "AgenticSteer",
     "BoundedDecomposer",
     "CapabilityDescriptor",
     "CapabilityFIB",
     "CapabilityNamingError",
+    "InFlightLeaf",
     "MatchConstraints",
     "ParsedCapabilityName",
+    "SteerRejected",
+    "SteerStore",
+    "SteerTargetEntry",
     "SubIntent",
     "SyncRuntimeNotSupported",
     "TaskGraphTemplate",
+    "append_steer_chain",
+    "apply_steer",
+    "build_steer_body",
     "capability_lpm_prefix",
     "capability_name",
     "expected_set_from",
@@ -55,4 +78,5 @@ __all__ = [
     "parse_capability_name",
     "register_descriptor",
     "require_async_runtime",
+    "sign_steer",
 ]
