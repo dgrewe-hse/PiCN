@@ -157,7 +157,9 @@ class AsyncBasicNFNLayer(AsyncLayerProcess):
     async def data_from_lower(
         self, to_lower: asyncio.Queue, to_higher: asyncio.Queue, data
     ) -> None:
-        result = self._core.handle_from_lower(data)
+        result = self._core.handle_from_lower(
+            data, has_to_higher=to_higher is not None
+        )
         await self._resolve_result_async(result, to_lower, to_higher)
 
     async def compute(self, interest: Interest) -> None:

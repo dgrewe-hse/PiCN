@@ -122,7 +122,9 @@ class BasicNFNLayer(LayerProcess):
     def data_from_lower(
         self, to_lower: multiprocessing.Queue, to_higher: multiprocessing.Queue, data
     ):
-        result = self._core.handle_from_lower(data)
+        result = self._core.handle_from_lower(
+            data, has_to_higher=to_higher is not None
+        )
         self._resolve_result(result, to_lower, to_higher)
 
     def data_from_higher(
