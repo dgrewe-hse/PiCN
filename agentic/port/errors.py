@@ -45,7 +45,7 @@ class TransportClosed(SubstrateError):
 
 
 @dataclass(frozen=True, slots=True)
-class AgenticError:
+class AgenticError(Exception):
     """Base for failures raised above the port.
 
     Never crosses downward into an adapter. Listed here so the two families
@@ -55,6 +55,9 @@ class AgenticError:
     """
 
     detail: str = ""
+
+    def __str__(self) -> str:
+        return self.detail
 
 
 @dataclass(frozen=True, slots=True)
