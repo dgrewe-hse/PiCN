@@ -21,6 +21,17 @@ from agentic.trust.merkle import (
     mth,
     verify_inclusion,
 )
+from agentic.trust.reputation import (
+    ALPHA_0,
+    BETA_0,
+    DECAY_INTERVAL_S,
+    DECAY_LAMBDA,
+    MIN_OBSERVATIONS,
+    WEIGHT_ATTESTED,
+    WEIGHT_UNVERIFIED,
+    ReputationState,
+    ReputationTable,
+)
 from agentic.trust.signed_artefact import (
     ALLOWED_KINDS,
     ArtefactError,
@@ -33,14 +44,23 @@ from agentic.trust.signed_artefact import (
 
 __all__ = [
     "ALLOWED_KINDS",
+    "ALPHA_0",
     "ArtefactError",
     "ArtefactVerificationError",
+    "BETA_0",
+    "DECAY_INTERVAL_S",
+    "DECAY_LAMBDA",
     "FloatInSignedBodyError",
+    "MIN_OBSERVATIONS",
     "MerkleTree",
     "NULL_RESPONSE",
     "NULL_STEER",
     "PENDING",
+    "ReputationState",
+    "ReputationTable",
     "SignedArtefact",
+    "WEIGHT_ATTESTED",
+    "WEIGHT_UNVERIFIED",
     "generate_ed25519_private_key",
     "inclusion_proof",
     "jcs_dumps",
