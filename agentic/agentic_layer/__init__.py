@@ -15,6 +15,13 @@ Stack wiring imports ``PiCN.Processes`` / ``PiCN.Packets`` only; all other
 """
 
 from agentic.agentic_layer.cfib import CapabilityFIB, MatchConstraints
+from agentic.agentic_layer.context_pit import (
+    MAX_CONTEXT_PIT_ENTRIES,
+    RESULT_RETENTION_MS,
+    ContextPIT,
+    ContextPitEntry,
+    ContextPitLeaf,
+)
 from agentic.agentic_layer.decomposer import (
     BoundedDecomposer,
     SubIntent,
@@ -38,10 +45,7 @@ from agentic.agentic_layer.steer import (
     MAX_STEERS_PER_SUBINTENT,
     NULL_STEER,
     AgenticSteer,
-    InFlightLeaf,
     SteerRejected,
-    SteerStore,
-    SteerTargetEntry,
     append_steer_chain,
     apply_steer,
     build_steer_body,
@@ -49,20 +53,22 @@ from agentic.agentic_layer.steer import (
 )
 
 __all__ = [
+    "MAX_CONTEXT_PIT_ENTRIES",
     "MAX_STEERS_PER_SUBINTENT",
     "NULL_STEER",
+    "RESULT_RETENTION_MS",
     "AgenticLayer",
     "AgenticSteer",
     "BoundedDecomposer",
     "CapabilityDescriptor",
     "CapabilityFIB",
     "CapabilityNamingError",
-    "InFlightLeaf",
+    "ContextPIT",
+    "ContextPitEntry",
+    "ContextPitLeaf",
     "MatchConstraints",
     "ParsedCapabilityName",
     "SteerRejected",
-    "SteerStore",
-    "SteerTargetEntry",
     "SubIntent",
     "SyncRuntimeNotSupported",
     "TaskGraphTemplate",

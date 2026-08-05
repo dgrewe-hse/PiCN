@@ -78,3 +78,8 @@ class DescriptorInvalid(AgenticError):
 @dataclass(frozen=True, slots=True)
 class AggregationFailed(AgenticError):
     """Aggregation could not produce a valid final result for an intent."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapacityExhausted(AgenticError):
+    """Context PIT is at capacity and no terminated entry can be evicted."""
