@@ -1,0 +1,86 @@
+name: Agentic CI
+
+# Separate from the PiCN stack CI (ci.yml). This workflow only exercises the
+# substrate-agnostic `agentic/` package: architectural contracts first
+# (fail fast), then mypy --strict, then the agentic pytest suite.
+#
+# PiCN regressions stay the responsibility of ci.yml. Shared-file changes that
+# could affect the stack should still be covered by opening / updating a PR
+# that triggers the PiCN workflow (e.g. against master), not by folding PiCN
+# tests into this file.
+
+on:
+  push:
+    branches: ["agentic/**"]
+    paths:
+      - "agentic/**"
+      - "pyproject.toml"
+      - ".github/workflows/agentic-ci.yml"
+  pull_request:
+    branches: [agentic/implementation]
+    paths:
+      - "agentic/**"
+      - "pyproject.toml"
+      - ".github/workflows/agentic-ci.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: agentic-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  architecture:
+    name: architecture (AC1–AC6) + mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && pip install pytest pytest-timeout mypy
+
+      - name: Architectural contracts (fail fast)
+        run: >
+          python -m pytest agentic/tests/test_architecture.py
+          -v
+          --timeout=30
+          -p no:cacheprovider
+
+      - name: mypy --strict agentic/
+        run: python -m mypy --strict agentic/
+
+  tests:
+    name: agentic pytest
+    needs: [architecture]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install test dependencies
+        # Mirror the local `.[dev]` surface used by agentic work: pytest stack,
+        # hypothesis for property tests, asyncio for async unit/mock tiers.
+        # LLM extras (`pydantic-ai`) stay out of the default path (AC3) and are
+        # added only when a job exercises the binding backend.
+        run: >
+          python -m pip install --upgrade pip &&
+          pip install pytest pytest-timeout pytest-asyncio hypothesis
+
+      - name: Run agentic suite
+        run: >
+          python -m pytest agentic/
+          -v
+          --timeout=90
+          -p no:cacheprovider
