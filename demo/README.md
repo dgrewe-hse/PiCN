@@ -156,3 +156,15 @@ python -m pytest agentic/tests/test_demo_bus_paired.py \
 Work lands on `agentic/commag-demo-measurements`, then merges into
 `agentic/implementation`. Optionally cut `agentic/demo` later for a stable
 ComMag artifact pointer.
+
+## ComMag evaluation report
+
+```bash
+pip install matplotlib
+python -m demo.generate_commag_report
+# or reuse JSONL:
+python -m demo.generate_commag_report --skip-runs
+```
+
+Outputs: [`demo/report/commag_evaluation.md`](report/commag_evaluation.md)
+and PNG figures under `demo/report/figures/`.

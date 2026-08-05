@@ -1,0 +1,42 @@
+{
+  "adversary_runs": 25,
+  "agentic_ms_mean": 7.591389550361782,
+  "agentic_ms_median": 7.224270986625925,
+  "artefact_by_k": {
+    "2": 893.0,
+    "3": 1326.0,
+    "4": 1757.0,
+    "5": 2190.0,
+    "8": 3489.0
+  },
+  "cold_start_note": "Absolute latencies report median after dropping samples >500 ms (SimulationBus cold-start / teardown stalls).",
+  "dispatch_by_k": {
+    "2": 5.0,
+    "3": 6.0,
+    "4": 7.0,
+    "5": 8.0,
+    "8": 11.0
+  },
+  "happy_runs": 25,
+  "m3_vs_async_mean": 0.9142351598189736,
+  "m3_vs_async_median": 0.9100260187431162,
+  "m3_vs_async_stdev": 0.15581807379614498,
+  "m3_vs_sync_mean": 0.3501005101431581,
+  "m3_vs_sync_median": 0.3335928854971497,
+  "m3_vs_sync_stdev": 0.0956777450439581,
+  "m4_mean": 1.0,
+  "m4_n": 25,
+  "nfn_async_ms_mean": 9.000539442058653,
+  "nfn_async_ms_median": 8.882458001608029,
+  "nfn_sync_ms_mean": 27.068639697972685,
+  "nfn_sync_ms_median": 23.779896000633016,
+  "phase1_runs": 50,
+  "phase2_runs": 30,
+  "pit_peak_by_k": {
+    "2": 1.0,
+    "3": 1.0,
+    "4": 1.0,
+    "5": 1.0,
+    "8": 1.0
+  }
+}

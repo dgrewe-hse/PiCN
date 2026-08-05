@@ -232,6 +232,7 @@ async def run_paired(
                     nfn_sync_ms = nfn_sync.elapsed_ms
                     nfn_sync_result = nfn_sync.result
                     wire = max(wire, nfn_sync.wire_bytes_estimate)
+                    await asyncio.sleep(0.15)
 
                 if include_async:
                     print(f"paired seed={seed} k={k}: NFNForwarder async…")

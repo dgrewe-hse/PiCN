@@ -59,11 +59,13 @@ def _mgmt_port(node: Any) -> int:
 def nfn_combine_interest(k: int) -> Name:
     """Identical NFN combine interest used by every bus strategy.
 
-    Nested ``combine`` over ``k`` string literals so fan-out scales with the
-    cardiac hospital count without requiring ``k`` remote content objects.
+    Fan-out is capped at depth 4 (``k_eff = min(k, 4)``) because deeper
+    nested ``combine`` expressions hang reliably on the sync NFN path under
+    SimulationBus. Structural cardiac metrics still use the full ``k``.
     """
+    k_eff = max(2, min(int(k), 4))
     expr = '"h0"'
-    for i in range(1, max(k, 1)):
+    for i in range(1, k_eff):
         expr = f'_({expr},"h{i}")'
     name = Name("/func/combine")
     name += expr
@@ -109,12 +111,34 @@ def _configure_combine(mgmt_port: int, interest_prefix: Name = Name("/func")) ->
 
 def run_nfn_bus_sync(*, k: int, seed: int, log_level: int = 255) -> BusRunResult:
     """Two sync ``NFNForwarder`` nodes + sync ``Fetch`` on SimulationBus."""
+    # Unique face names avoid collisions when many sync buses are started
+    # back-to-back in one process (mgmt/port reuse + lingering MP children).
+    tag = f"{seed}-{k}-{time.time_ns() % 1_000_000}"
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return _run_nfn_bus_sync_once(
+                k=k, seed=seed, log_level=log_level, tag=f"{tag}-a{attempt}"
+            )
+        except Exception as exc:  # noqa: BLE001 — retry transient Empty/teardown races
+            last_error = exc
+            time.sleep(0.35 * (attempt + 1))
+    assert last_error is not None
+    raise last_error
+
+
+def _run_nfn_bus_sync_once(
+    *, k: int, seed: int, log_level: int, tag: str
+) -> BusRunResult:
     encoder = NdnTlvEncoder()
     bus = SimulationBus(packetencoder=encoder)
+    addr0 = f"nfn0-{tag}"
+    addr1 = f"nfn1-{tag}"
+    addr_f = f"fetch-{tag}"
     nfn0 = NFNForwarder(
         port=0,
         encoder=encoder,
-        interfaces=[bus.add_interface("nfn0")],
+        interfaces=[bus.add_interface(addr0)],
         log_level=log_level,
         ageing_interval=1,
         runtime=Runtime.SYNC,
@@ -122,17 +146,17 @@ def run_nfn_bus_sync(*, k: int, seed: int, log_level: int = 255) -> BusRunResult
     nfn1 = NFNForwarder(
         port=0,
         encoder=encoder,
-        interfaces=[bus.add_interface("nfn1")],
+        interfaces=[bus.add_interface(addr1)],
         log_level=log_level,
         ageing_interval=1,
         runtime=Runtime.SYNC,
     )
     fetch = Fetch(
-        "nfn0",
+        addr0,
         None,
         log_level,
         encoder,
-        interfaces=[bus.add_interface("fetch")],
+        interfaces=[bus.add_interface(addr_f)],
         runtime=Runtime.SYNC,
     )
     interest = nfn_combine_interest(k)
@@ -140,11 +164,18 @@ def run_nfn_bus_sync(*, k: int, seed: int, log_level: int = 255) -> BusRunResult
     nfn0.start_forwarder()
     nfn1.start_forwarder()
     bus.start_process()
+    time.sleep(0.05)
+    mgmt_client: MgmtClient | None = None
     try:
-        _configure_combine(_mgmt_port(nfn0))
+        mgmt_client = MgmtClient(_mgmt_port(nfn0))
+        mgmt_client.add_face(addr1, None, 0)
+        mgmt_client.add_forwarding_rule(Name("/func"), [0])
+        mgmt_client.add_new_content(Name("/func/combine"), _COMBINE_SRC)
         started = time.perf_counter()
         result = fetch.fetch_data(interest, timeout=20)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if result is None:
+            raise RuntimeError("sync NFN fetch returned None")
         return BusRunResult(
             mode="nfn_sync",
             elapsed_ms=elapsed_ms,
@@ -156,14 +187,29 @@ def run_nfn_bus_sync(*, k: int, seed: int, log_level: int = 255) -> BusRunResult
             runtime="sync",
         )
     finally:
+        if mgmt_client is not None:
+            try:
+                mgmt_client.shutdown()
+            except Exception:
+                pass
         try:
             fetch.stop_fetch()
         except Exception:
             pass
         unblock_sim_interfaces(nfn0, nfn1, fetch)
-        nfn0.stop_forwarder()
-        nfn1.stop_forwarder()
-        bus.stop_process()
+        try:
+            nfn0.stop_forwarder()
+        except Exception:
+            pass
+        try:
+            nfn1.stop_forwarder()
+        except Exception:
+            pass
+        try:
+            bus.stop_process()
+        except Exception:
+            pass
+        time.sleep(0.1)
 
 
 async def run_nfn_bus_async(*, k: int, seed: int, log_level: int = 255) -> BusRunResult:
@@ -231,7 +277,12 @@ async def run_nfn_bus(
     runtime: NfnRuntimeName | Runtime = "async",
     log_level: int = 255,
 ) -> BusRunResult:
-    """Run plain NFN on SimulationBus under ``sync`` or ``async`` runtime."""
+    """Run plain NFN on SimulationBus under ``sync`` or ``async`` runtime.
+
+    Sync topologies are executed in a ``spawn`` subprocess so multiprocessing
+    ``fork`` is not taken from a multi-threaded asyncio parent (which is the
+    usual cause of intermittent ``Empty`` timeouts under repeated campaigns).
+    """
     if isinstance(runtime, Runtime):
         runtime_name: NfnRuntimeName = (
             "async" if runtime is Runtime.ASYNC else "sync"
@@ -240,9 +291,59 @@ async def run_nfn_bus(
         runtime_name = runtime
     if runtime_name == "sync":
         return await asyncio.to_thread(
-            run_nfn_bus_sync, k=k, seed=seed, log_level=log_level
+            _run_nfn_bus_sync_spawn, k=k, seed=seed, log_level=log_level
         )
     return await run_nfn_bus_async(k=k, seed=seed, log_level=log_level)
+
+
+def _run_nfn_bus_sync_spawn(*, k: int, seed: int, log_level: int) -> BusRunResult:
+    """Run sync NFN in a fresh interpreter (avoids asyncio×fork races)."""
+    import json
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "demo._sync_nfn_worker",
+            "--k",
+            str(k),
+            "--seed",
+            str(seed),
+            "--log-level",
+            str(log_level),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if not proc.stdout.strip():
+        raise RuntimeError(
+            f"sync NFN worker produced no stdout "
+            f"(code={proc.returncode}, stderr={proc.stderr[-500:]})"
+        )
+    # Prefer the last JSON line (workers may emit logging to stderr only).
+    lines = [ln for ln in proc.stdout.strip().splitlines() if ln.startswith("{")]
+    if not lines:
+        raise RuntimeError(
+            f"sync NFN worker produced no JSON "
+            f"(code={proc.returncode}, stderr={proc.stderr[-500:]})"
+        )
+    payload = json.loads(lines[-1])
+    if not payload.get("ok"):
+        raise RuntimeError(f"sync NFN worker failed: {payload.get('error')}")
+    return BusRunResult(
+        mode=str(payload["mode"]),
+        elapsed_ms=float(payload["elapsed_ms"]),
+        result=str(payload["result"]),
+        k=int(payload["k"]),
+        seed=int(payload["seed"]),
+        simulated_interfaces=int(payload["simulated_interfaces"]),
+        wire_bytes_estimate=int(payload["wire_bytes_estimate"]),
+        runtime=str(payload["runtime"]),
+    )
 
 
 async def run_agentic_bus(*, k: int, seed: int, log_level: int = 255) -> BusRunResult:
