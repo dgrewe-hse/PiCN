@@ -2,7 +2,8 @@ name: Agentic CI
 
 # Separate from the PiCN stack CI (ci.yml). This workflow only exercises the
 # substrate-agnostic `agentic/` package: architectural contracts first
-# (fail fast), then mypy --strict, then the agentic pytest suite.
+# (fail fast), then mypy --strict, then the agentic pytest suite with a
+# coverage gate.
 #
 # PiCN regressions stay the responsibility of ci.yml. Shared-file changes that
 # could affect the stack should still be covered by opening / updating a PR
@@ -14,12 +15,14 @@ on:
     branches: ["agentic/**"]
     paths:
       - "agentic/**"
+      - "PiCN/Layers/NFNLayer/**"
       - "pyproject.toml"
       - ".github/workflows/agentic-ci.yml"
   pull_request:
     branches: [agentic/implementation]
     paths:
       - "agentic/**"
+      - "PiCN/Layers/NFNLayer/**"
       - "pyproject.toml"
       - ".github/workflows/agentic-ci.yml"
   workflow_dispatch: {}
@@ -56,10 +59,10 @@ jobs:
         run: python -m mypy --strict agentic/
 
   tests:
-    name: agentic pytest
+    name: agentic pytest + coverage
     needs: [architecture]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -71,16 +74,20 @@ jobs:
 
       - name: Install test dependencies
         # Mirror the local `.[dev]` surface used by agentic work: pytest stack,
-        # hypothesis for property tests, asyncio for async unit/mock tiers.
-        # LLM extras (`pydantic-ai`) stay out of the default path (AC3) and are
-        # added only when a job exercises the binding backend.
+        # hypothesis for property tests, asyncio for async unit/mock tiers,
+        # coverage gate at 90% of agentic/ production modules.
+        # LLM extras (`pydantic-ai`) stay out of the default path (AC3).
         run: >
           python -m pip install --upgrade pip &&
-          pip install pytest pytest-timeout pytest-asyncio hypothesis
+          pip install pytest pytest-timeout pytest-asyncio hypothesis pytest-cov
 
-      - name: Run agentic suite
+      - name: Run agentic suite with coverage
         run: >
           python -m pytest agentic/
           -v
           --timeout=90
           -p no:cacheprovider
+          --cov=agentic
+          --cov-branch
+          --cov-report=term-missing
+          --cov-fail-under=90

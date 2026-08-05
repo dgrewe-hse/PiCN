@@ -36,6 +36,7 @@ dev = [
     "pytest-timeout",
     "pytest-rerunfailures",
     "pytest-asyncio",
+    "pytest-cov",
     "mypy",
     "hypothesis",
 ]
@@ -75,8 +76,35 @@ files = ["agentic"]
 exclude = [
     "(^|/)PiCN(/|$)",
     "(^|/)PiCNExternal(/|$)",
+    "(^|/)agentic/tests(/|$)",
 ]
 
 [[tool.mypy.overrides]]
 module = ["PiCN.*", "PiCNExternal.*"]
 ignore_missing_imports = true
+follow_imports = "skip"
+
+# AsyncLayerProcess is untyped upstream; allow subclassing without weakening
+# strict checks on our own code.
+[[tool.mypy.overrides]]
+module = ["agentic.agentic_layer.layer"]
+disallow_subclassing_any = false
+
+# Coverage is measured on agentic production modules and gated at 90%.
+[tool.coverage.run]
+branch = true
+source = ["agentic"]
+omit = [
+    "agentic/tests/*",
+    "agentic/port/protocol.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]

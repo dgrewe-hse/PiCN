@@ -208,3 +208,12 @@ def test_manual_clock_rejects_negative_advance() -> None:
     clock = ManualClock(0.0)
     with pytest.raises(ValueError):
         clock.advance(-1.0)
+
+
+def test_manual_clock_set_and_call() -> None:
+    clock = ManualClock(1.0)
+    assert clock() == 1.0
+    clock.set(5.0)
+    assert clock() == 5.0
+    clock.advance(0.5)
+    assert clock() == 5.5
