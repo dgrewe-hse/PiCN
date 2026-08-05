@@ -9,7 +9,8 @@
 A distinct agentic-layer message (not a keepalive reuse). A Steer may change
 only ``payload`` and ``constraints.latency_bound``. Attempts to touch the
 expected sub-intent set, aggregation policy, capability name, or credential are
-rejected wholesale. The steer-chain / Merkle leaf update is a Phase D seam.
+rejected wholesale. ``NULL_STEER`` and ``append_steer_chain`` feed the Merkle
+leaf value (A-005); Context PIT owns path recomputation.
 """
 
 from __future__ import annotations
@@ -32,12 +33,10 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from agentic.trust.jcs import FloatInSignedBodyError, jcs_dumps
+from agentic.trust.merkle import NULL_STEER
 
 # PROVISIONAL: bound pathological continuous steering; derive from measurement.
 MAX_STEERS_PER_SUBINTENT: int = 8
-
-# Domain-separated sentinel for "never steered" (Phase D folds this into leaves).
-NULL_STEER: bytes = b"\x00" * 32
 
 _ALLOWED_TOP_KEYS = frozenset({"payload", "constraints"})
 _ALLOWED_CONSTRAINT_KEYS = frozenset({"latency_bound"})
