@@ -79,7 +79,7 @@ jobs:
         # LLM extras (`pydantic-ai`) stay out of the default path (AC3).
         run: >
           python -m pip install --upgrade pip &&
-          pip install pytest pytest-timeout pytest-asyncio hypothesis pytest-cov
+          pip install pytest pytest-timeout pytest-asyncio hypothesis pytest-cov cryptography
 
       - name: Run agentic suite with coverage
         run: >

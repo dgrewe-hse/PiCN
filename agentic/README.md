@@ -86,4 +86,4 @@ Phase A foundations:
 - Mock adapter (in-memory, ordered delivery, failure injection) — done
 - `AgenticLayer` skeleton + capability naming + NFN upward pass-through — done
 
-Next: Phase B (signed artefacts, descriptors, C-FIB).
+Next: Phase B continued (capability descriptors, C-FIB).
