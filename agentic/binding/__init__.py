@@ -11,3 +11,31 @@ package. The forwarding path must not import them. Registration checks that a
 backend conforms to the capability descriptor; the descriptor stays
 authoritative.
 """
+
+from agentic.binding.deterministic import DeterministicBackend
+from agentic.binding.protocol import CapabilityBackend
+from agentic.binding.registry import (
+    BindingResponse,
+    CapabilityRegistration,
+    CapabilityRegistry,
+)
+from agentic.binding.schema import (
+    SchemaCompatibilityError,
+    SchemaProfileError,
+    assert_restricted_profile,
+    schemas_compatible,
+    validate_against_schema,
+)
+
+__all__ = [
+    "BindingResponse",
+    "CapabilityBackend",
+    "CapabilityRegistration",
+    "CapabilityRegistry",
+    "DeterministicBackend",
+    "SchemaCompatibilityError",
+    "SchemaProfileError",
+    "assert_restricted_profile",
+    "schemas_compatible",
+    "validate_against_schema",
+]
