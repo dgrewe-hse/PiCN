@@ -122,4 +122,6 @@ test_output={"beds_free": 2})`. The invoke path is identical.
 * [Architecture](agentic.md)  
 * [Bindings](agentic_bindings.md)  
 * [Port](agentic_port.md)  
+* [Demo and measurements](agentic_demo.md) · [`demo/`](../demo/)  
 * Cardiac scenario: `python -m pytest agentic/tests/test_scenario_e2e.py -v`
+* SimulationBus three-way: `python -m demo.run_paired_bus --seeds 1 --k 2 --allow-dirty`

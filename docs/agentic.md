@@ -66,8 +66,17 @@ The fabric invokes every backend through the same
 
 ## Related docs
 
+* [Demo and measurements](agentic_demo.md) — cardiac walkthrough, sweeps, figures, SimulationBus M3
 * [Port and events](agentic_port.md)
 * [Bindings](agentic_bindings.md)
 * [Message formats](agentic_messages.md)
 * [Configuration](agentic_config.md)
 * [Hello agent](hello_agent.md)
+
+## Future work
+
+* **Agentic management surface** — stock `AsyncMgmt` only sees CS/FIB/PIT. It
+  cannot inspect capability registrations, C-FIB, Context PIT, reputation, or
+  accountability state. A dedicated agentic mgmt API (read/selected write) is
+  required for operators; until then use the Python plug-in API and harness
+  artefacts.

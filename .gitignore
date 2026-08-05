@@ -20,3 +20,6 @@ __pycache__/
 *.pyc
 baseline/
 docs/agentic-design-adrs/
+
+# ComMag demo local outputs
+demo/results/

@@ -18,6 +18,11 @@ EventKind = Literal[
     "agentic_latency",
     "detection",
     "scale_point",
+    "context_pit_peak",
+    "context_pit_entries",
+    "dispatch_count",
+    "aggregation_complete",
+    "artefact_bytes",
 ]
 
 
@@ -30,6 +35,9 @@ class MetricEvent:
     :param seed: Run seed.
     :param value: Primary numeric payload (latency ms, bytes, 0/1 detection, …).
     :param labels: Extra dimensions (must not invent a transport-free aggregate).
+        For ``nfn_baseline_latency``, set ``labels[\"mode\"]`` to ``\"plain_nfn\"``
+        only when the sample comes from a real plain-NFN paired run; otherwise
+        omit the baseline or use ``mode=\"synthetic\"`` (never publishable).
     """
 
     kind: EventKind

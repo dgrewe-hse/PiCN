@@ -45,12 +45,14 @@ async def test_cardiac_happy_path_both_transports(transport: str) -> None:
         )
     )
     assert out["metadata"]["transport"] == transport
-    assert out["metrics"]["m3_overhead_ratio"] is not None
+    assert out["metrics"]["m3_publishable"] is False
+    assert out["metrics"]["m3_overhead_ratio"] is None
+    assert out["metrics"]["context_pit_peak"] is not None
 
 
 @pytest.mark.asyncio
-async def test_m3_overhead_reproducible_same_seed() -> None:
-    """M3 ratio is reproducible across two runs with the same seed+transport."""
+async def test_agentic_latency_reproducible_same_seed() -> None:
+    """Same seed+transport yields reproducible structural scale metadata."""
     harness_a = MeasurementHarness()
     harness_b = MeasurementHarness()
     cfg = RunConfig(
@@ -64,12 +66,10 @@ async def test_m3_overhead_reproducible_same_seed() -> None:
     )
     a = await harness_a.run(cfg)
     b = await harness_b.run(cfg)
-    # Same seed → same scenario structure; M3 is agentic/nfn within one run.
-    # Ratios should match closely (synthetic baseline is a fixed fraction).
-    assert a["metrics"]["m3_overhead_ratio"] == pytest.approx(
-        b["metrics"]["m3_overhead_ratio"], rel=1e-9, abs=1e-9
-    )
     assert a["metadata"]["seed"] == b["metadata"]["seed"] == 99
+    assert a["metrics"]["m3_publishable"] is False
+    assert b["metrics"]["m3_publishable"] is False
+    assert a["artefacts"]["dispatch_count"] == b["artefacts"]["dispatch_count"]
 
 
 @pytest.mark.asyncio
