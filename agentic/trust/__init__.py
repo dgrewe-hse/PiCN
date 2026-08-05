@@ -11,6 +11,16 @@ templates, and log entries share one envelope without pulling in the stack.
 """
 
 from agentic.trust.jcs import FloatInSignedBodyError, jcs_dumps
+from agentic.trust.merkle import (
+    NULL_RESPONSE,
+    NULL_STEER,
+    PENDING,
+    MerkleTree,
+    inclusion_proof,
+    leaf_digest,
+    mth,
+    verify_inclusion,
+)
 from agentic.trust.signed_artefact import (
     ALLOWED_KINDS,
     ArtefactError,
@@ -26,9 +36,17 @@ __all__ = [
     "ArtefactError",
     "ArtefactVerificationError",
     "FloatInSignedBodyError",
+    "MerkleTree",
+    "NULL_RESPONSE",
+    "NULL_STEER",
+    "PENDING",
     "SignedArtefact",
     "generate_ed25519_private_key",
+    "inclusion_proof",
     "jcs_dumps",
+    "leaf_digest",
+    "mth",
     "sign_artefact",
     "verify_artefact",
+    "verify_inclusion",
 ]
