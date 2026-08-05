@@ -67,7 +67,10 @@ def _digest(label: str) -> bytes:
 
 
 def _public_der(key: Ed25519PrivateKey) -> bytes:
-    return key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    # public_bytes is typed Any when cryptography stubs are missing (CI mypy).
+    return bytes(
+        key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    )
 
 
 def _make_descriptor(key: Ed25519PrivateKey) -> CapabilityDescriptor:
