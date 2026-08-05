@@ -41,7 +41,7 @@ Enforced by `tests/test_architecture.py` (Agentic CI runs them first):
 | ID | Rule |
 |---|---|
 | **AC1** | `trust/`, `scenario/`, `benchmark/` import nothing from `PiCN.*` |
-| **AC2** | Only `adapters/picn/` imports `PiCN.*` |
+| **AC2** | Only `adapters/picn/` imports `PiCN.*` broadly; `agentic_layer/` may import `PiCN.Processes` / `PiCN.Packets` only |
 | **AC3** | No module on the forwarding path imports an LLM client (`pydantic_ai`, `openai`, `anthropic`, `ollama`) |
 | **AC4** | `port/` defines no substrate-specific types |
 | **AC5** | Agentic modules import the port interface, never adapter internals |
@@ -79,9 +79,11 @@ is separate from the PiCN stack workflow (`ci.yml`).
 
 ## Status
 
-Phase A foundations in progress:
+Phase A foundations:
 
 - Package skeleton and architectural contracts (AC1–AC6) — done
 - Substrate port Protocol, closed event union, and error families — done
 - Mock adapter (in-memory, ordered delivery, failure injection) — done
-- `AgenticLayer` skeleton and capability naming — next
+- `AgenticLayer` skeleton + capability naming + NFN upward pass-through — done
+
+Next: Phase B (signed artefacts, descriptors, C-FIB).

@@ -9,4 +9,32 @@
 Sits above NFN in the stack. New code with no sync callers — there is no
 sync wrapper and no shared ``*Core`` split. Imports the substrate port, never
 adapter internals, and never an LLM client.
+
+Stack wiring imports ``PiCN.Processes`` / ``PiCN.Packets`` only; all other
+``PiCN.*`` imports stay in ``agentic.adapters.picn``.
 """
+
+from agentic.agentic_layer.layer import AgenticLayer
+from agentic.agentic_layer.naming import (
+    CapabilityNamingError,
+    ParsedCapabilityName,
+    capability_lpm_prefix,
+    capability_name,
+    issuer_digest_from_key,
+    issuer_digest_matches,
+    parse_capability_name,
+)
+from agentic.agentic_layer.runtime import SyncRuntimeNotSupported, require_async_runtime
+
+__all__ = [
+    "AgenticLayer",
+    "CapabilityNamingError",
+    "ParsedCapabilityName",
+    "SyncRuntimeNotSupported",
+    "capability_lpm_prefix",
+    "capability_name",
+    "issuer_digest_from_key",
+    "issuer_digest_matches",
+    "parse_capability_name",
+    "require_async_runtime",
+]
