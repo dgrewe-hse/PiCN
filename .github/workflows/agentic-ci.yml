@@ -73,13 +73,16 @@ jobs:
           python-version: "3.14"
 
       - name: Install test dependencies
-        # Mirror the local `.[dev]` surface used by agentic work: pytest stack,
+        # Mirror the local `.[dev]` / `.[agentic]` surface: pytest stack,
         # hypothesis for property tests, asyncio for async unit/mock tiers,
         # coverage gate at 90% of agentic/ production modules.
-        # LLM extras (`pydantic-ai`) stay out of the default path (AC3).
+        # pydantic-ai is installed only in this job so dual-backend tests run;
+        # architecture job stays free of LLM clients (AC3 — no import from
+        # agentic_layer/).
         run: >
           python -m pip install --upgrade pip &&
-          pip install pytest pytest-timeout pytest-asyncio hypothesis pytest-cov cryptography
+          pip install pytest pytest-timeout pytest-asyncio hypothesis pytest-cov
+          cryptography pydantic-ai
 
       - name: Run agentic suite with coverage
         run: >
