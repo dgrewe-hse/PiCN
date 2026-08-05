@@ -14,6 +14,7 @@ Stack wiring imports ``PiCN.Processes`` / ``PiCN.Packets`` only; all other
 ``PiCN.*`` imports stay in ``agentic.adapters.picn``.
 """
 
+from agentic.agentic_layer.cfib import CapabilityFIB, MatchConstraints
 from agentic.agentic_layer.descriptor import CapabilityDescriptor, register_descriptor
 from agentic.agentic_layer.layer import AgenticLayer
 from agentic.agentic_layer.naming import (
@@ -30,7 +31,9 @@ from agentic.agentic_layer.runtime import SyncRuntimeNotSupported, require_async
 __all__ = [
     "AgenticLayer",
     "CapabilityDescriptor",
+    "CapabilityFIB",
     "CapabilityNamingError",
+    "MatchConstraints",
     "ParsedCapabilityName",
     "SyncRuntimeNotSupported",
     "capability_lpm_prefix",
