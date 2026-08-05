@@ -39,3 +39,7 @@ __all__ = [
     "schemas_compatible",
     "validate_against_schema",
 ]
+
+# PydanticAIBackend is imported from agentic.binding.pydantic_ai_backend so
+# AC3 stays intact: agentic_layer never pulls pydantic_ai via this package root.
+
