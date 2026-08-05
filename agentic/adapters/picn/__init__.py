@@ -9,3 +9,7 @@
 Translates between the substrate-neutral port and the modernized PiCN
 async stack. All other agentic packages must stay free of ``PiCN`` imports.
 """
+
+from agentic.adapters.picn.port import PicnSubstratePort
+
+__all__ = ["PicnSubstratePort"]
