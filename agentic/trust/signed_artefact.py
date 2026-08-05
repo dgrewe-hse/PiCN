@@ -30,7 +30,14 @@ from cryptography.hazmat.primitives.serialization import (
 
 from agentic.trust.jcs import FloatInSignedBodyError, jcs_dumps
 
-ALLOWED_KINDS = frozenset({"capability-descriptor", "task-graph-template"})
+ALLOWED_KINDS = frozenset(
+    {
+        "capability-descriptor",
+        "task-graph-template",
+        "attestation-quote",
+        "accountability-log-entry",
+    }
+)
 
 
 class ArtefactError(ValueError):

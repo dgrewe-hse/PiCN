@@ -79,12 +79,11 @@ is separate from the PiCN stack workflow (`ci.yml`).
 
 ## Status
 
-Phases A–D (through aggregation):
+Phases A–E (through trust substrate):
 
-- Package skeleton and architectural contracts (AC1–AC6)
-- Substrate port, mock adapter, `AgenticLayer` + capability naming
-- Signed artefacts, capability descriptors, C-FIB
-- Bounded decomposer + `AgenticSteer`
-- RFC 6962 Merkle tree, Context PIT, aggregation / omission accountability
+- Package skeleton, port, mock adapter, `AgenticLayer`
+- Descriptors, C-FIB, decomposer, Steer
+- Merkle tree, Context PIT, aggregation / omission accountability
+- Beta reputation, attestation quotes, accountability log
 
-Next: Phase E (reputation, attestation, accountability log).
+Next: Phase F (capability backends, scenario, measurement).
