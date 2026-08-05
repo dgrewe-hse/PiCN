@@ -19,3 +19,4 @@ PiCN/Layers/LinkLayer/Interfaces/Simulation.py
 __pycache__/
 *.pyc
 baseline/
+docs/agentic-design-adrs/

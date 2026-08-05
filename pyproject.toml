@@ -31,19 +31,29 @@ classifiers = [
 
 [project.optional-dependencies]
 opencv = ["opencv-python>=4.2"]
-dev = ["pytest", "pytest-timeout", "pytest-rerunfailures", "pytest-asyncio"]
+dev = [
+    "pytest",
+    "pytest-timeout",
+    "pytest-rerunfailures",
+    "pytest-asyncio",
+    "mypy",
+    "hypothesis",
+]
 # Needed only when using picn-relay -c/--config (TOML config files)
 config = ["pytoml"]
+# Agentic binding extras — LLM clients stay out of the forwarding path (AC3).
+agentic = ["pydantic-ai"]
 
 [project.scripts]
 # No console scripts — entry points live in starter/ and ProgramLibs/
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["PiCN*", "PiCNExternal*"]
+include = ["PiCN*", "PiCNExternal*", "agentic*"]
 
 [tool.pytest.ini_options]
-testpaths = ["PiCN", "PiCNExternal"]
+# Architectural tests under agentic/tests run first when selecting agentic/.
+testpaths = ["agentic", "PiCN", "PiCNExternal"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = "-q"
@@ -53,3 +63,20 @@ addopts = "-q"
 # between tests, no order-dependent failures.
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
+
+# mypy --strict on agentic/ only. Inherited PiCN.* is excluded: it is not
+# typed end-to-end, and the port/adapter split exists so agentic code does not
+# need those annotations to stay sound.
+[tool.mypy]
+python_version = "3.14"
+strict = true
+mypy_path = "."
+files = ["agentic"]
+exclude = [
+    "(^|/)PiCN(/|$)",
+    "(^|/)PiCNExternal(/|$)",
+]
+
+[[tool.mypy.overrides]]
+module = ["PiCN.*", "PiCNExternal.*"]
+ignore_missing_imports = true
