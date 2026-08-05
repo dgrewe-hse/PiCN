@@ -9,8 +9,12 @@ only the PiCN adapter imports the existing stack. Agent frameworks (for
 example Pydantic AI) stay behind the binding package so the forwarding path
 never depends on an LLM client.
 
-This keeps the door open to run the same layer on another forwarder later
-without rewriting trust, scenario, or measurement code.
+Public documentation lives under [`docs/`](../docs/):
+
+* [Architecture](../docs/agentic.md)
+* [Hello agent](../docs/hello_agent.md)
+* [Bindings](../docs/agentic_bindings.md) · [Port](../docs/agentic_port.md) ·
+  [Messages](../docs/agentic_messages.md) · [Config](../docs/agentic_config.md)
 
 ## License
 
@@ -24,12 +28,12 @@ copyright notice and `SPDX-License-Identifier: BSD-3-Clause`.
 agentic/
   port/              # SubstratePort Protocol + event types (no PiCN imports)
   adapters/
-    picn/            # the ONLY module importing PiCN.*
+    picn/            # the ONLY module importing PiCN.* broadly
     mock/            # in-memory adapter for tests
-  agentic_layer/     # async-only layer: C-FIB, decomposer, Context PIT
+  agentic_layer/     # async-only layer: C-FIB, decomposer, Context PIT, plug-in
   trust/             # attestation, reputation, accountability log
   binding/           # capability backends (deterministic + agent frameworks)
-  scenario/          # end-to-end actors and world-state simulator
+  scenario/          # pluggable scenarios (cardiac, …)
   benchmark/         # sweep runner, metrics, rollups
   tests/
 ```
@@ -42,14 +46,12 @@ Enforced by `tests/test_architecture.py` (Agentic CI runs them first):
 |---|---|
 | **AC1** | `trust/`, `scenario/`, `benchmark/` import nothing from `PiCN.*` |
 | **AC2** | Only `adapters/picn/` imports `PiCN.*` broadly; `agentic_layer/` may import `PiCN.Processes` / `PiCN.Packets` only |
-| **AC3** | No module on the forwarding path imports an LLM client (`pydantic_ai`, `openai`, `anthropic`, `ollama`) |
+| **AC3** | No LLM client on the forwarding path (`pydantic_ai`, `openai`, `anthropic`, `ollama`) |
 | **AC4** | `port/` defines no substrate-specific types |
 | **AC5** | Agentic modules import the port interface, never adapter internals |
 | **AC6** | `binding/` imports attestation verification and reference APIs only — never minting |
 
 ## Development
-
-Python 3.14, from the repository environment:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -65,25 +67,19 @@ pip install -e ".[agentic]"
 ### Tests
 
 ```bash
-# Architectural contracts + typing
 python -m pytest agentic/tests/test_architecture.py -v --timeout=30
 mypy --strict agentic/
-
-# Full agentic suite (grows with each milestone)
 python -m pytest agentic/ -v --timeout=90
 ```
 
-Continuous integration for this package lives in
-[`.github/workflows/agentic-ci.yml`](../.github/workflows/agentic-ci.yml) and
-is separate from the PiCN stack workflow (`ci.yml`).
+Continuous integration: [`.github/workflows/agentic-ci.yml`](../.github/workflows/agentic-ci.yml).
 
 ## Status
 
-Phases A–E (through trust substrate):
+Track 1 (M1–M6) mechanisms plus Phase G wiring:
 
-- Package skeleton, port, mock adapter, `AgenticLayer`
-- Descriptors, C-FIB, decomposer, Steer
-- Merkle tree, Context PIT, aggregation / omission accountability
-- Beta reputation, attestation quotes, accountability log
-
-Next: Phase F (capability backends, scenario, measurement).
+* Port, mock + PiCN adapters, `AgenticLayer` plug-in API, `AgenticForwarder`
+* Descriptors, C-FIB, decomposer, Steer, Context PIT, Merkle, aggregation
+* Reputation, attestation, accountability log
+* Capability backends (deterministic + Pydantic AI / `TestModel`)
+* Cardiac scenario, measurement harness, exit-criteria invariant catalog

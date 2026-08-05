@@ -7,6 +7,15 @@
 * [Tutorial](tutorial.md)
 * [NFN](nfn.md)
 * [Simulation](simulation.md)
+* [Hello agent (capability routing)](hello_agent.md)
+
+### Agentic layer
+
+* [Architecture](agentic.md)
+* [Substrate port](agentic_port.md)
+* [Capability bindings](agentic_bindings.md)
+* [Message formats](agentic_messages.md)
+* [Configuration](agentic_config.md)
 
 ### Operational Matters
 
