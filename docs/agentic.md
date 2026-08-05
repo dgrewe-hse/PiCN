@@ -71,3 +71,12 @@ The fabric invokes every backend through the same
 * [Message formats](agentic_messages.md)
 * [Configuration](agentic_config.md)
 * [Hello agent](hello_agent.md)
+
+## Future work
+
+* **Agentic management surface** — stock `AsyncMgmt` only sees CS/FIB/PIT. It
+  cannot inspect capability registrations, C-FIB, Context PIT, reputation, or
+  accountability state. A dedicated agentic mgmt API (read/selected write) is
+  required for operators; until then use the Python plug-in API and harness
+  artefacts. Tracked under private `docs/agentic-design-adrs/tasks.md`
+  (“Future work — Agentic management surface”).
