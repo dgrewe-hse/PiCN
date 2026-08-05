@@ -102,6 +102,7 @@ source = ["agentic"]
 omit = [
     "agentic/tests/*",
     "agentic/port/protocol.py",
+    "agentic/binding/protocol.py",
     "*/__init__.py",
 ]
 
