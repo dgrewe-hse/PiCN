@@ -19,7 +19,7 @@ from agentic.benchmark.sweep import (
     run_sweep,
 )
 
-_DEFAULT_OUT = Path(__file__).resolve().parent / "results" / "phase1.jsonl"
+_DEFAULT_OUT = Path(__file__).resolve().parent / "results" / "cardiac_structural.jsonl"
 
 
 async def _async_main(args: argparse.Namespace) -> int:
@@ -56,8 +56,8 @@ async def _async_main(args: argparse.Namespace) -> int:
     publishable = sum(1 for r in results if r["metrics"].get("m3_publishable"))
     print(f"Wrote {len(results)} records. m3_publishable runs: {publishable}")
     print(
-        "Note: Phase-1 sweeps do not emit publishable M3; "
-        "use demo.run_paired_bus for plain-NFN pairing."
+        "Note: cardiac structural sweeps do not emit publishable "
+        "nfn_stack_overhead (legacy m3); use demo.run_paired_bus."
     )
     return 0
 

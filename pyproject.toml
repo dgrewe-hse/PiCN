@@ -108,6 +108,8 @@ omit = [
     "agentic/port/protocol.py",
     "agentic/binding/protocol.py",
     "*/__init__.py",
+    # Thin subprocess entry for sync NFN under asyncio parents (not unit-tested).
+    "demo/_sync_nfn_worker.py",
 ]
 
 [tool.coverage.report]

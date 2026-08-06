@@ -84,7 +84,8 @@ Track 1 (M1–M6) mechanisms plus Phase G wiring:
 * Reputation, attestation, accountability log
 * Capability backends (deterministic + Pydantic AI / `TestModel`)
 * Cardiac scenario, measurement harness, exit-criteria invariant catalog
-* ComMag demo package (`demo/`) — walkthrough, sweeps, SimulationBus paired M3
+* ComMag demo package (`demo/`) — walkthrough, sweeps, cardiac network bus,
+  NFN stack-overhead pairing
 
 ## Future work
 

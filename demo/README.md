@@ -1,6 +1,6 @@
 # ComMag demo package
 
-Operator-facing walkthroughs, measurement sweeps, SimulationBus comparisons,
+Operator-facing walkthroughs, measurement campaigns, SimulationBus demos,
 and figure generation for the agentic cardiac-response prototype.
 
 Library code stays under [`agentic/`](../agentic/). Full tutorial:
@@ -11,26 +11,28 @@ Library code stays under [`agentic/`](../agentic/). Full tutorial:
 
 ## What this demo shows
 
-1. **Cardiac scenario (in-process)** — Context PIT commit-before-forward,
+1. **Cardiac structural (in-process)** — Context PIT commit-before-forward,
    Merkle trace root, adversary + KP-A reputation (deprioritise, not ban).
-2. **Measurement campaigns** — multi-run sweeps → JSONL → CSV/PNG figures.
-3. **SimulationBus comparison** — same NFN combine interest under:
-   - `NFNForwarder` **sync**
-   - `NFNForwarder` **async**
-   - `AgenticForwarder` **async** (only supported runtime)
-
-Publishable **M3** (Agentic / plain NFN) appears only after paired bus runs.
+2. **Cardiac network demo (SimulationBus)** — ambulance
+   `AgenticLayer.submit_intent` emits `/cap/fwd/...` capability Interests;
+   edge `AgenticForwarder` answers with hospital capacity Content; ambulance
+   aggregates and ranks (optional paediatric filter). **Not** NFN λ-names.
+3. **NFN stack-overhead (SimulationBus)** — same NFN combine interest under
+   `NFNForwarder` sync/async vs `AgenticForwarder` async (AgenticLayer idle
+   for that name). Legacy metric key: `m3_*` / alias `nfn_stack_overhead_*`.
 
 ## Layout
 
 ```
 demo/
   README.md                 # this file
-  cardiac_walkthrough.py    # narrative happy + adversary
-  run_sweep.py              # Phase 1 multi-run → JSONL
-  plot_metrics.py           # figures (M3 gated)
-  bus_topology.py           # SimulationBus topologies (PiCN imports OK)
-  run_paired_bus.py         # three-way NFN sync/async + Agentic async
+  cardiac_walkthrough.py    # narrative happy + adversary (in-process)
+  run_sweep.py              # cardiac structural multi-run → JSONL
+  plot_metrics.py           # figures (stack-overhead gated)
+  bus_topology.py           # NFN combine SimulationBus topologies
+  cardiac_bus_topology.py   # paper-aligned /cap Interest bus topology
+  run_cardiac_bus.py        # cardiac network demo CLI
+  run_paired_bus.py         # NFN stack-overhead three-way comparison
   results/                  # gitignored local outputs
 ```
 
@@ -43,13 +45,15 @@ pip install -e ".[dev]"
 pip install matplotlib
 ```
 
-## Quickstart (cardiac walkthrough)
+## Quickstart
 
 ```bash
+# In-process cardiac story (structural)
 python -m demo.cardiac_walkthrough --k 3 --seed 42
-```
 
-Expect verified trace roots, ranking, intake, and adversary KP-A lines.
+# Paper-aligned network story (capability Interests on SimulationBus)
+python -m demo.run_cardiac_bus --k 2 --seed 1
+```
 
 ## Create an agentic workflow
 
@@ -60,11 +64,6 @@ Three substrate options — pick one.
 Register a capability on `AgenticLayer` + `MockSubstratePort` (no PiCN faces).
 See the full snippet in [`docs/hello_agent.md`](../docs/hello_agent.md).
 
-```bash
-# After copying the hello_agent example into a file:
-python your_hello_agent.py
-```
-
 ### B. Live PiCN UDP (`AgenticForwarder`)
 
 ```python
@@ -74,41 +73,46 @@ from PiCN.ProgramLibs.runtime import Runtime
 fwd = AgenticForwarder(port=0, runtime=Runtime.ASYNC, log_level=255)
 # fwd.register_capability(descriptor, backend)
 await fwd.start_forwarder_async()
-# configure faces / FIB via AsyncMgmt (classic ICN tables only)
 await fwd.stop_forwarder_async()
 ```
 
 `AgenticForwarder` is **async-only**. Sync raises `SyncRuntimeNotSupported`.
 
-### C. PiCN SimulationBus (multi-node, this package)
+### C. PiCN SimulationBus
 
-Same NFN combine interest, three strategies (see Phase 2 below):
+**Cardiac network (paper use case):**
+
+```bash
+python -m demo.run_cardiac_bus --k 2 --seed 1
+
+# Multi-run with mean / median / stdev:
+python -m demo.run_cardiac_bus --seeds 1-5 --k-list 2,3,4 \
+  --out demo/results/cardiac_network.jsonl --replace-out \
+  --summary-json demo/results/cardiac_network_summary.json
+```
+
+**NFN stack-overhead microbenchmark:**
 
 ```bash
 python -m demo.run_paired_bus --seeds 1-3 --k 2,3 --baseline nfn_async \
-  --out demo/results/phase2_paired.jsonl --allow-dirty
+  --out demo/results/nfn_stack_overhead.jsonl --allow-dirty
 ```
 
-Classic PiCN NFN-only tutorials (no agentic layer):
-`PiCN/Simulations/SimulationsTutorial.py` (sync) and
-`PiCN/Simulations/SimulationsTutorial_async.py` (async). Background:
-[`docs/simulation.md`](../docs/simulation.md).
-
-## Phase 1 — measurement sweep + figures
+## Cardiac structural sweep + figures
 
 Default grid ≈ **50 runs** (`seeds 1-5` × `k ∈ {2,3,4,5,8}` × happy/adversary):
 
 ```bash
 python -m demo.run_sweep --seeds 1-5 --k 2,3,4,5,8 --path happy,adversary \
-  --out demo/results/phase1.jsonl --allow-dirty
+  --out demo/results/cardiac_structural.jsonl --allow-dirty
 
-python -m demo.plot_metrics --in demo/results/phase1.jsonl \
+python -m demo.plot_metrics --in demo/results/cardiac_structural.jsonl \
   --out demo/results/figures/
 ```
 
-Phase 1 records have `m3_publishable=false` (no synthetic M3).
+Structural records have `m3_publishable=false` / `nfn_stack_overhead_publishable=false`.
 
-## Phase 2 — SimulationBus strategies
+## NFN stack-overhead campaign
 
 | Strategy | Primary node | Runtime |
 |----------|--------------|---------|
@@ -118,44 +122,33 @@ Phase 1 records have `m3_publishable=false` (no synthetic M3).
 
 ```bash
 python -m demo.run_paired_bus --seeds 1-10 --k 3 \
-  --out demo/results/phase2_paired.jsonl --allow-dirty
+  --out demo/results/nfn_stack_overhead.jsonl --allow-dirty
 
-# M3 denominator (default async NFN — peer of Agentic):
-python -m demo.run_paired_bus --baseline nfn_async ...
-python -m demo.run_paired_bus --baseline nfn_sync ...
-
-# Unlock M3 figures:
-python -m demo.plot_metrics --in demo/results/phase2_paired.jsonl \
+python -m demo.plot_metrics --in demo/results/nfn_stack_overhead.jsonl \
   --out demo/results/figures/ --include-m3
 ```
 
-`--include-m3` **refuses** unless JSONL has `m3_publishable=true`.
-
-JSONL highlights: `bus.nfn_sync_elapsed_ms`, `nfn_async_elapsed_ms`,
-`agentic_async_elapsed_ms`, `metrics.m3_vs_nfn_sync`, `m3_vs_nfn_async`.
+`--include-m3` **refuses** unless JSONL has `m3_publishable=true`
+(alias: `nfn_stack_overhead_publishable`).
 
 ## Command cheat sheet
 
 | Command | Purpose |
 |---------|---------|
 | `python -m demo.cardiac_walkthrough` | In-process cardiac happy + adversary |
-| `python -m demo.run_sweep` | Multi-run campaign → JSONL |
-| `python -m demo.plot_metrics` | Figures from JSONL (M3 gated) |
-| `python -m demo.run_paired_bus` | Bus: NFN sync + async + Agentic async |
+| `python -m demo.run_cardiac_bus` | Paper: `/cap` Interests on SimulationBus |
+| `python -m demo.run_sweep` | Structural multi-run → JSONL |
+| `python -m demo.plot_metrics` | Figures from JSONL (stack-overhead gated) |
+| `python -m demo.run_paired_bus` | NFN stack-overhead: sync + async + Agentic |
 
 ## Tests
 
 ```bash
-python -m pytest agentic/tests/test_demo_bus_paired.py \
+python -m pytest agentic/tests/test_demo_cardiac_bus.py \
+  agentic/tests/test_demo_bus_paired.py \
   agentic/tests/test_demo_sweep.py agentic/tests/test_demo_cli.py \
   agentic/tests/test_m3_publishable.py -v --timeout=90
 ```
-
-## Publishing
-
-Work lands on `agentic/commag-demo-measurements`, then merges into
-`agentic/implementation`. Optionally cut `agentic/demo` later for a stable
-ComMag artifact pointer.
 
 ## ComMag evaluation report
 

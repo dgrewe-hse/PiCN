@@ -4,7 +4,7 @@
 # Redistribution and use under the BSD 3-Clause License; see the LICENSE
 # file in the project root for the full text.
 
-"""SimulationBus comparison: NFN sync/async vs Agentic async (publishable M3)."""
+"""SimulationBus comparison: NFN sync/async vs Agentic async (NFN stack overhead)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from agentic.scenario.cardiac import CardiacScenario
 
 from demo.bus_topology import run_agentic_bus, run_nfn_bus
 
-_DEFAULT_OUT = Path(__file__).resolve().parent / "results" / "phase2_paired.jsonl"
+_DEFAULT_OUT = Path(__file__).resolve().parent / "results" / "nfn_stack_overhead.jsonl"
 
 
 async def _cardiac_structural(*, k: int, seed: int) -> dict[str, Any]:
@@ -145,7 +145,8 @@ def _comparison_record(
         agentic_ms / nfn_async_ms if nfn_async_ms > 0 else None
     )
     return {
-        "kind": "paired_bus_run",
+        "kind": "nfn_stack_overhead_bus",
+        "campaign": "nfn_stack_overhead",
         "config": {
             "seed": seed,
             "transport": transport,
@@ -160,12 +161,15 @@ def _comparison_record(
             "transport": transport,
             "k": k,
             "m3_note": (
-                "Same NFN combine interest on SimulationBus under three "
-                "strategies: NFNForwarder sync, NFNForwarder async, and "
+                "NFN stack-overhead campaign: same NFN combine interest on "
+                "SimulationBus under NFNForwarder sync/async and "
                 "AgenticForwarder async (companion NFN async). Publishable "
-                f"M3 uses baseline={baseline_label}. Cardiac structural "
+                f"nfn_stack_overhead (legacy key m3) uses baseline={baseline_label}. "
+                "This is not the cardiac capability-Interest network demo — "
+                "see python -m demo.run_cardiac_bus. Cardiac structural "
                 "metrics are co-reported from the in-process scenario."
             ),
+            "campaign": "nfn_stack_overhead",
         },
         "metrics": {
             "transport": metrics.transport,
@@ -174,6 +178,8 @@ def _comparison_record(
             "m2_message_bytes": metrics.m2_message_bytes,
             "m3_overhead_ratio": metrics.m3_overhead_ratio,
             "m3_publishable": metrics.m3_publishable,
+            "nfn_stack_overhead_ratio": metrics.nfn_stack_overhead_ratio,
+            "nfn_stack_overhead_publishable": metrics.nfn_stack_overhead_publishable,
             "m3_vs_nfn_sync": m3_vs_sync,
             "m3_vs_nfn_async": m3_vs_async,
             "m3_baseline": baseline_label,

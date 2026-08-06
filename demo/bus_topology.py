@@ -115,7 +115,7 @@ def run_nfn_bus_sync(*, k: int, seed: int, log_level: int = 255) -> BusRunResult
     # back-to-back in one process (mgmt/port reuse + lingering MP children).
     tag = f"{seed}-{k}-{time.time_ns() % 1_000_000}"
     last_error: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(3):  # pragma: no cover — exercised via subprocess worker
         try:
             return _run_nfn_bus_sync_once(
                 k=k, seed=seed, log_level=log_level, tag=f"{tag}-a{attempt}"
@@ -127,7 +127,7 @@ def run_nfn_bus_sync(*, k: int, seed: int, log_level: int = 255) -> BusRunResult
     raise last_error
 
 
-def _run_nfn_bus_sync_once(
+def _run_nfn_bus_sync_once(  # pragma: no cover — SimulationBus sync path via worker
     *, k: int, seed: int, log_level: int, tag: str
 ) -> BusRunResult:
     encoder = NdnTlvEncoder()
@@ -319,20 +319,20 @@ def _run_nfn_bus_sync_spawn(*, k: int, seed: int, log_level: int) -> BusRunResul
         text=True,
         timeout=120,
     )
-    if not proc.stdout.strip():
+    if not proc.stdout.strip():  # pragma: no cover
         raise RuntimeError(
             f"sync NFN worker produced no stdout "
             f"(code={proc.returncode}, stderr={proc.stderr[-500:]})"
         )
     # Prefer the last JSON line (workers may emit logging to stderr only).
     lines = [ln for ln in proc.stdout.strip().splitlines() if ln.startswith("{")]
-    if not lines:
+    if not lines:  # pragma: no cover
         raise RuntimeError(
             f"sync NFN worker produced no JSON "
             f"(code={proc.returncode}, stderr={proc.stderr[-500:]})"
         )
     payload = json.loads(lines[-1])
-    if not payload.get("ok"):
+    if not payload.get("ok"):  # pragma: no cover
         raise RuntimeError(f"sync NFN worker failed: {payload.get('error')}")
     return BusRunResult(
         mode=str(payload["mode"]),
