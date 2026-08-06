@@ -59,6 +59,16 @@ class MetricsSnapshot:
     aggregation_complete: float | None = None
     artefact_bytes_total: float | None = None
 
+    @property
+    def nfn_stack_overhead_publishable(self) -> bool:
+        """Paper-facing alias for ``m3_publishable`` (NFN combine stack tax)."""
+        return self.m3_publishable
+
+    @property
+    def nfn_stack_overhead_ratio(self) -> float | None:
+        """Paper-facing alias for ``m3_overhead_ratio``."""
+        return self.m3_overhead_ratio
+
 
 def compute_metrics(events: Sequence[MetricEvent], *, transport: str) -> MetricsSnapshot:
     """Compute M1–M5 and structural metrics for a single transport.

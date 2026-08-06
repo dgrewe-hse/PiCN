@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Sequence
-from typing import Optional
+from typing import Any, Optional
 
 from PiCN.Layers.ChunkLayer import AsyncBasicChunkLayer
 from PiCN.Layers.ChunkLayer.Chunkifyer import SimpleContentChunkifyer
@@ -47,14 +47,15 @@ Clock = Callable[[], float]
 
 
 class PicnSubstratePort:
-    """UDP client adapter conforming to :class:`~agentic.port.protocol.SubstratePort`.
+    """UDP / SimulationBus client adapter conforming to ``SubstratePort``.
 
     Sends Interests and receives Content/Nack via a Fetch-style async PiCN
     stack. Producer-side ``InboundRequest`` events are raised when
     :meth:`inject_interest` is used (AgenticForwarder wiring lands in G.3).
 
-    :param peer_host: Remote ICN forwarder host.
-    :param peer_port: Remote UDP port.
+    :param peer_host: Remote ICN forwarder host, or SimulationBus face name.
+    :param peer_port: Remote UDP port. Pass ``None`` for SimulationBus peers
+        (face address is the string ``peer_host``, matching ``Fetch``).
     :param encoder: Packet encoder (defaults to ``SimpleStringEncoder``).
     :param interfaces: Optional local interfaces (defaults to ``UDP4Interface(0)``).
     :param clock: Injected clock for deadlines / event timestamps.
@@ -64,7 +65,7 @@ class PicnSubstratePort:
     def __init__(
         self,
         peer_host: str,
-        peer_port: int,
+        peer_port: int | None = None,
         *,
         encoder: BasicEncoder | None = None,
         interfaces: list[BaseInterface] | None = None,
@@ -95,12 +96,19 @@ class PicnSubstratePort:
                 self._linklayer,
             ]
         )
-        self._fid = self._linklayer.faceidtable.get_or_create_faceid(
-            AddressInfo((peer_host, peer_port), 0)
-        )
+        # SimulationBus faces use a bare string address (Fetch with port=None).
+        if peer_port is None:
+            self._fid = self._linklayer.faceidtable.get_or_create_faceid(
+                AddressInfo(peer_host, 0)
+            )
+        else:
+            self._fid = self._linklayer.faceidtable.get_or_create_faceid(
+                AddressInfo((peer_host, peer_port), 0)
+            )
         self._inbound: asyncio.Queue[SubstrateEvent] | None = None
         self._table: dict[Name, list[EndpointRef]] = {}
         self._outstanding: dict[bytes, Name] = {}
+        self._deadline_tasks: dict[bytes, asyncio.Task[None]] = {}
         self._response_payloads: dict[bytes, bytes] = {}
         self._reader_task: asyncio.Task[None] | None = None
         self._started = False
@@ -122,22 +130,30 @@ class PicnSubstratePort:
 
     async def stop(self) -> None:
         self._started = False
+        for correlation in list(self._deadline_tasks):
+            self._cancel_deadline(correlation)
         if self._reader_task is not None:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
+            task = self._reader_task
             self._reader_task = None
+            task.cancel()
         if self._stack_started:
-            await self._lstack.stop_all()
+            # Fire-and-forget stop: awaiting stop_all can hang when uplink
+            # pumps or test monkeypatches never complete.
+            try:
+                asyncio.create_task(self._lstack.stop_all())
+            except Exception:
+                pass
             self._stack_started = False
         for iface in self._interfaces:
             close = getattr(iface, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except Exception:
+                    pass
         self._inbound = None
         self._outstanding.clear()
+        await asyncio.sleep(0)
 
     def parse_name(self, s: str) -> Name:
         parts = [p.encode("utf-8") for p in s.split("/") if p]
@@ -166,13 +182,12 @@ class PicnSubstratePort:
         correlation: bytes,
         deadline: float,
     ) -> None:
+        # Register outstanding BEFORE any await so a fast Content reply cannot
+        # race past an empty demux table.
+        self._outstanding[correlation] = name
         await self._put(
             RequestSent(correlation=correlation, name=name, at=self._clock())
         )
-        self._outstanding[correlation] = name
-        # Encode payload as Interest application parameter via name marker when
-        # non-empty — SimpleStringEncoder Interests carry no body; content path
-        # uses Content objects. Empty payload is the common fetch case.
         interest = Interest(to_picn_name(name))
         try:
             await self._lstack.queue_from_higher.put([self._fid, interest])
@@ -188,9 +203,9 @@ class PicnSubstratePort:
             )
             return
         timeout = max(0.0, deadline - self._clock())
-        asyncio.create_task(
-            self._await_response(correlation, name, timeout),
-            name=f"picn-wait-{correlation.hex()[:8]}",
+        self._deadline_tasks[correlation] = asyncio.create_task(
+            self._deadline_watch(correlation, name, timeout),
+            name=f"picn-deadline-{correlation.hex()[:8]}",
         )
         _ = payload  # reserved for future Interest parameter binding
 
@@ -225,27 +240,43 @@ class PicnSubstratePort:
         match = self.longest_prefix_match(name, self._table)
         return match.endpoints if match else ()
 
-    async def _await_response(
+    def _cancel_deadline(self, correlation: bytes) -> None:
+        task = self._deadline_tasks.pop(correlation, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _deadline_watch(
         self, correlation: bytes, name: Name, timeout: float
     ) -> None:
-        if correlation not in self._outstanding:
-            return
         try:
-            packet = await asyncio.wait_for(
-                self._lstack.queue_to_higher.get(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            if self._outstanding.pop(correlation, None) is None:
-                return
-            await self._put(
-                RequestTimedOut(correlation=correlation, name=name, at=self._clock())
-            )
-            return
+            await asyncio.sleep(timeout)
         except asyncio.CancelledError:
-            raise
-        self._outstanding.pop(correlation, None)
+            return
+        if self._outstanding.pop(correlation, None) is None:
+            return
+        self._deadline_tasks.pop(correlation, None)
+        await self._put(
+            RequestTimedOut(correlation=correlation, name=name, at=self._clock())
+        )
+
+    def _match_outstanding(self, content_name: Name) -> bytes | None:
+        """Return correlation for an outstanding Interest matching ``content_name``."""
+        for correlation, interest_name in self._outstanding.items():
+            if interest_name == content_name or interest_name.is_prefix_of(content_name):
+                return correlation
+            if content_name.is_prefix_of(interest_name):
+                return correlation
+        return None
+
+    async def _deliver_uplink_packet(self, packet: Any) -> None:
         body = packet[1] if isinstance(packet, (list, tuple)) else packet
         if isinstance(body, Content):
+            content_name = from_picn_name(body.name)
+            correlation = self._match_outstanding(content_name)
+            if correlation is None:
+                return
+            self._outstanding.pop(correlation, None)
+            self._cancel_deadline(correlation)
             content = body.content
             if isinstance(content, str):
                 raw = content.encode("utf-8")
@@ -256,12 +287,19 @@ class PicnSubstratePort:
             await self._put(
                 ResponseArrived(
                     correlation=correlation,
-                    name=from_picn_name(body.name),
+                    name=content_name,
                     payload=raw,
                     at=self._clock(),
                 )
             )
-        elif isinstance(body, Nack):
+            return
+        if isinstance(body, Nack):
+            # Nacks rarely carry enough name context; fail the oldest outstanding.
+            if not self._outstanding:
+                return
+            correlation, name = next(iter(self._outstanding.items()))
+            self._outstanding.pop(correlation, None)
+            self._cancel_deadline(correlation)
             await self._put(
                 RequestFailed(
                     correlation=correlation,
@@ -270,28 +308,26 @@ class PicnSubstratePort:
                     at=self._clock(),
                 )
             )
-        else:
-            await self._put(
-                RequestFailed(
-                    correlation=correlation,
-                    name=name,
-                    reason=Unreachable(detail="unexpected packet"),
-                    at=self._clock(),
-                )
-            )
-
-    async def _read_uplink(self) -> None:
-        """Drain unexpected uplink packets while idle (keep queue healthy)."""
-        try:
-            while True:
-                await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            raise
+            return
 
     async def _put(self, event: SubstrateEvent) -> None:
-        if self._inbound is None or not self._started:
+        if self._inbound is None:
+            # Soft-drop during shutdown; hard-fail if never started.
+            if not self._started:
+                return
             raise RuntimeError("PicnSubstratePort.start() must be called first")
         await self._inbound.put(event)
+
+    async def _read_uplink(self) -> None:
+        """Demux uplink Content/Nack onto outstanding Interests by name."""
+        try:
+            while True:
+                packet = await self._lstack.queue_to_higher.get()
+                if not self._started:
+                    return
+                await self._deliver_uplink_packet(packet)
+        except asyncio.CancelledError:
+            raise
 
 
 __all__ = ["PicnSubstratePort"]

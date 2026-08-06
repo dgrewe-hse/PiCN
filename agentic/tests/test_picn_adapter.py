@@ -127,7 +127,13 @@ async def test_picn_port_nack_becomes_request_failed(monkeypatch: pytest.MonkeyP
     async def fake_put(_item: object) -> None:
         return None
 
+    calls = {"n": 0}
+
     async def fake_get() -> list:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            # Park until cancelled so stop() can finish cleanly.
+            await asyncio.Event().wait()
         return [0, Nack(PN("/m"), NackReason.NO_ROUTE, Interest(PN("/m")))]
 
     monkeypatch.setattr(port._lstack.queue_from_higher, "put", fake_put)

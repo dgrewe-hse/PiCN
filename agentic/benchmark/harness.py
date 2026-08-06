@@ -58,6 +58,9 @@ def _metrics_dict(metrics: MetricsSnapshot) -> dict[str, Any]:
         "m2_message_bytes": metrics.m2_message_bytes,
         "m3_overhead_ratio": metrics.m3_overhead_ratio,
         "m3_publishable": metrics.m3_publishable,
+        # Paper-facing aliases (NFN combine stack overhead; not cardiac-over-bus).
+        "nfn_stack_overhead_ratio": metrics.nfn_stack_overhead_ratio,
+        "nfn_stack_overhead_publishable": metrics.nfn_stack_overhead_publishable,
         "m4_detection_rate": metrics.m4_detection_rate,
         "m5_scale_latency_by_k": metrics.m5_scale_latency_by_k,
         "context_pit_peak": metrics.context_pit_peak,
