@@ -1,7 +1,16 @@
 {
   "adversary_runs": 25,
+  "agentic_ms": {
+    "max": 12.28720898507163,
+    "mean": 7.591389550361782,
+    "median": 7.224270986625925,
+    "min": 4.118375014513731,
+    "n": 20.0,
+    "stdev": 2.2672331673226767
+  },
   "agentic_ms_mean": 7.591389550361782,
   "agentic_ms_median": 7.224270986625925,
+  "agentic_ms_stdev": 2.2672331673226767,
   "artefact_by_k": {
     "2": 893.0,
     "3": 1326.0,
@@ -9,13 +18,170 @@
     "5": 2190.0,
     "8": 3489.0
   },
-  "cold_start_note": "Absolute latencies report median after dropping samples >500 ms (SimulationBus cold-start / teardown stalls).",
+  "artefact_by_k_stats": {
+    "2": {
+      "max": 893.0,
+      "mean": 893.0,
+      "median": 893.0,
+      "min": 893.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "3": {
+      "max": 1326.0,
+      "mean": 1326.0,
+      "median": 1326.0,
+      "min": 1326.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "4": {
+      "max": 1757.0,
+      "mean": 1757.0,
+      "median": 1757.0,
+      "min": 1757.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "5": {
+      "max": 2190.0,
+      "mean": 2190.0,
+      "median": 2190.0,
+      "min": 2190.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "8": {
+      "max": 3489.0,
+      "mean": 3489.0,
+      "median": 3489.0,
+      "min": 3489.0,
+      "n": 5.0,
+      "stdev": 0.0
+    }
+  },
+  "cardiac_network": {
+    "campaign": "cardiac_network_demo",
+    "dispatch_by_k": {
+      "2": {
+        "max": 5.0,
+        "mean": 5.0,
+        "median": 5.0,
+        "min": 5.0,
+        "n": 5.0,
+        "stdev": 0.0
+      },
+      "3": {
+        "max": 6.0,
+        "mean": 6.0,
+        "median": 6.0,
+        "min": 6.0,
+        "n": 5.0,
+        "stdev": 0.0
+      },
+      "4": {
+        "max": 7.0,
+        "mean": 7.0,
+        "median": 7.0,
+        "min": 7.0,
+        "n": 5.0,
+        "stdev": 0.0
+      }
+    },
+    "dispatch_count": {
+      "max": 7.0,
+      "mean": 6.0,
+      "median": 6.0,
+      "min": 5.0,
+      "n": 15.0,
+      "stdev": 0.8451542547285166
+    },
+    "elapsed_ms": {
+      "max": 6.697792035993189,
+      "mean": 5.343430473779638,
+      "median": 5.343124968931079,
+      "min": 3.778000012971461,
+      "n": 15.0,
+      "stdev": 0.9528772197466602
+    },
+    "elapsed_ms_by_k": {
+      "2": {
+        "max": 6.655250035692006,
+        "mean": 5.055408214684576,
+        "median": 5.343124968931079,
+        "min": 3.778000012971461,
+        "n": 5.0,
+        "stdev": 1.1650129016084418
+      },
+      "3": {
+        "max": 5.581499950494617,
+        "mean": 4.876157990656793,
+        "median": 4.871790995821357,
+        "min": 4.359374986961484,
+        "n": 5.0,
+        "stdev": 0.4699932017870582
+      },
+      "4": {
+        "max": 6.697792035993189,
+        "mean": 6.098725215997547,
+        "median": 6.515417015179992,
+        "min": 5.07745798677206,
+        "n": 5.0,
+        "stdev": 0.7141782946171275
+      }
+    },
+    "runs": 15,
+    "verified_runs": 15
+  },
+  "cold_start_note": "Absolute latencies report median after dropping samples >500 ms (SimulationBus cold-start / teardown stalls). Stdev uses the same trimmed sample set (sample standard deviation).",
   "dispatch_by_k": {
     "2": 5.0,
     "3": 6.0,
     "4": 7.0,
     "5": 8.0,
     "8": 11.0
+  },
+  "dispatch_by_k_stats": {
+    "2": {
+      "max": 5.0,
+      "mean": 5.0,
+      "median": 5.0,
+      "min": 5.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "3": {
+      "max": 6.0,
+      "mean": 6.0,
+      "median": 6.0,
+      "min": 6.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "4": {
+      "max": 7.0,
+      "mean": 7.0,
+      "median": 7.0,
+      "min": 7.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "5": {
+      "max": 8.0,
+      "mean": 8.0,
+      "median": 8.0,
+      "min": 8.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "8": {
+      "max": 11.0,
+      "mean": 11.0,
+      "median": 11.0,
+      "min": 11.0,
+      "n": 5.0,
+      "stdev": 0.0
+    }
   },
   "happy_runs": 25,
   "m3_vs_async_mean": 0.9142351598189736,
@@ -26,10 +192,30 @@
   "m3_vs_sync_stdev": 0.0956777450439581,
   "m4_mean": 1.0,
   "m4_n": 25,
+  "m4_stdev": 0.0,
+  "network_runs": 15,
+  "nfn_async_ms": {
+    "max": 14.343124988954514,
+    "mean": 9.000539442058653,
+    "median": 8.882458001608029,
+    "min": 5.0793749978765845,
+    "n": 20.0,
+    "stdev": 2.5144308208754866
+  },
   "nfn_async_ms_mean": 9.000539442058653,
   "nfn_async_ms_median": 8.882458001608029,
+  "nfn_async_ms_stdev": 2.5144308208754866,
+  "nfn_sync_ms": {
+    "max": 134.27550002234057,
+    "mean": 27.068639697972685,
+    "median": 23.779896000633016,
+    "min": 12.919042026624084,
+    "n": 20.0,
+    "stdev": 26.064319700375787
+  },
   "nfn_sync_ms_mean": 27.068639697972685,
   "nfn_sync_ms_median": 23.779896000633016,
+  "nfn_sync_ms_stdev": 26.064319700375787,
   "phase1_runs": 50,
   "phase2_runs": 30,
   "pit_peak_by_k": {
@@ -38,5 +224,47 @@
     "4": 1.0,
     "5": 1.0,
     "8": 1.0
+  },
+  "pit_peak_by_k_stats": {
+    "2": {
+      "max": 1.0,
+      "mean": 1.0,
+      "median": 1.0,
+      "min": 1.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "3": {
+      "max": 1.0,
+      "mean": 1.0,
+      "median": 1.0,
+      "min": 1.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "4": {
+      "max": 1.0,
+      "mean": 1.0,
+      "median": 1.0,
+      "min": 1.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "5": {
+      "max": 1.0,
+      "mean": 1.0,
+      "median": 1.0,
+      "min": 1.0,
+      "n": 5.0,
+      "stdev": 0.0
+    },
+    "8": {
+      "max": 1.0,
+      "mean": 1.0,
+      "median": 1.0,
+      "min": 1.0,
+      "n": 5.0,
+      "stdev": 0.0
+    }
   }
 }
