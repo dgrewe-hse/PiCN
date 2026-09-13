@@ -80,7 +80,40 @@ class NFNLayerCore:
         self.logger = logger if logger is not None else Logger("NFNCore", 255)
 
     def handle_from_higher(self, data) -> NFNCoreResult:
-        return NFNCoreResult()
+        """Handle a packet arriving from the layer above.
+
+        NFN currently owns NFN-marked / R2C ``Content`` and all ``Nack``s; a
+        non-NFN ``Content`` (e.g. an agentic capability response pushed down
+        from the top of an ``AgenticForwarder`` stack) is **passed downward**
+        unmodified, mirroring the upward pass-through in :meth:`handle_interest`
+        (`NFNLayerCore.py:117-123`). An ``Interest`` is still routed to the
+        existing :meth:`handle_interest`.
+
+        :param data: ``[packet_id, packet]`` (or a bare packet with default id).
+        :return: Result carrying at most one downward pass-through outbound.
+        """
+        result = NFNCoreResult()
+        if isinstance(data, (list, tuple)) and len(data) == 2:
+            packet_id = data[0]
+            packet = data[1]
+        else:
+            packet_id = 1
+            packet = data
+        if isinstance(packet, Interest):
+            return self.handle_interest(packet_id, packet)
+        if not isinstance(packet, Content):
+            # Unknown / malformed (including Nack): preserve prior drop.
+            return result
+        components = packet.name.components if packet.name is not None else ()
+        if components and components[-1] != b"NFN" and not self.r2cclient.R2C_identify_Name(
+            packet.name
+        ):
+            # Non-NFN, non-R2C Content is not owned by NFN: re-emit downward
+            # unmodified so the lower layer can resolve it. "queue_lower"
+            # mirrors the upward branch's "queue_higher" instance-queue token.
+            self.logger.info("Passing Content from higher down: " + str(packet.name))
+            result.outbounds.append(Outbound("queue_lower", [packet_id, packet]))
+        return result
 
     def handle_from_lower(self, data, has_to_higher: bool = False) -> NFNCoreResult:
         if isinstance(data, list):
