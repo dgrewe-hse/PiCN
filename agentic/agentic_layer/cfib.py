@@ -96,9 +96,17 @@ class CapabilityFIB:
     def register(self, descriptor: CapabilityDescriptor) -> None:
         """Add a verified descriptor to the FIB.
 
+        A descriptor whose name is not version-marked (e.g. a producer
+        registered under the ``/cap/fwd/…`` wire name ``submit_intent``
+        emits) falls back to using the full name as its LPM prefix, mirroring
+        :meth:`match`.
+
         :param descriptor: Registration-cached descriptor.
         """
-        prefix = capability_lpm_prefix(descriptor.name)
+        try:
+            prefix = capability_lpm_prefix(descriptor.name)
+        except Exception:
+            prefix = descriptor.name
         self._by_prefix.setdefault(prefix, []).append(descriptor)
 
     def match(

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Optional
 
 from PiCN.Layers.ChunkLayer import AsyncBasicChunkLayer
@@ -44,6 +44,10 @@ from agentic.port.events import (
 from agentic.port.names import EndpointRef, Match, Name, PrefixTable
 
 Clock = Callable[[], float]
+# Forwarder-backed response sink: given (correlation, payload), transmit the
+# producer response over the forwarder's own stack. The client ``_lstack`` has
+# no ICN layer, so a response cannot simply be pushed onto it (v4 NF-1).
+ResponseSink = Callable[[bytes, bytes], Awaitable[None]]
 
 
 class PicnSubstratePort:
@@ -60,6 +64,8 @@ class PicnSubstratePort:
     :param interfaces: Optional local interfaces (defaults to ``UDP4Interface(0)``).
     :param clock: Injected clock for deadlines / event timestamps.
     :param log_level: PiCN logger level.
+    :param response_sink: Optional forwarder-backed response seam; when set,
+        :meth:`send_response` delegates to it instead of recording locally.
     """
 
     def __init__(
@@ -71,8 +77,10 @@ class PicnSubstratePort:
         interfaces: list[BaseInterface] | None = None,
         clock: Clock | None = None,
         log_level: int = 255,
+        response_sink: ResponseSink | None = None,
     ) -> None:
         self._clock: Clock = clock if clock is not None else time.monotonic
+        self._response_sink = response_sink
         self._encoder = encoder if encoder is not None else SimpleStringEncoder(log_level=log_level)
         self._interfaces = interfaces if interfaces is not None else [UDP4Interface(0)]
         faceidtable = FaceIDDict()
@@ -210,6 +218,18 @@ class PicnSubstratePort:
         _ = payload  # reserved for future Interest parameter binding
 
     async def send_response(self, correlation: bytes, payload: bytes) -> None:
+        """Send a producer response for a prior ``InboundRequest``.
+
+        When a forwarder-backed ``response_sink`` is installed, the sink owns
+        transmission (Case A: the Content returns through the forwarder's ICN).
+        Otherwise the payload is recorded locally for the mock-only path.
+
+        :param correlation: Opaque token from the inbound request.
+        :param payload: Response body.
+        """
+        if self._response_sink is not None:
+            await self._response_sink(correlation, payload)
+            return
         self._response_payloads[correlation] = payload
 
     async def inject_interest(
@@ -294,11 +314,14 @@ class PicnSubstratePort:
             )
             return
         if isinstance(body, Nack):
-            # Nacks rarely carry enough name context; fail the oldest outstanding.
-            if not self._outstanding:
+            # Prefer name-based correlation (directional LPM) over dict order;
+            # drop when nothing matches rather than mis-attributing. The wire
+            # carries no token (A-012), so an unmatched Nack is not deliverable.
+            nack_name = from_picn_name(body.name)
+            correlation = self._match_outstanding(nack_name)
+            if correlation is None:
                 return
-            correlation, name = next(iter(self._outstanding.items()))
-            self._outstanding.pop(correlation, None)
+            name = self._outstanding.pop(correlation, nack_name)
             self._cancel_deadline(correlation)
             await self._put(
                 RequestFailed(
