@@ -1,0 +1,4 @@
+# Model preference for the LLM producer backend (stage A: on-Pi Ollama).
+# Parsed by agentic.binding.pydantic_ai_backend.load_model_preference —
+# the first entry resolvable at cell start wins.
+preference = ["ollama:llama3.2"]

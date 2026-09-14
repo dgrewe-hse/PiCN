@@ -1,0 +1,31 @@
+# Global Experiment E deployment truth (design v4 §5.6).
+# Rendered into every node's PICN_* env file — must match the env contract in
+# demo/physical_node.py exactly.
+
+# --- picn_base --------------------------------------------------------------
+python_version: "3.14"
+picn_repo: "https://github.com/cn-uofbasel/PiCN.git"
+# Overridden by --extra-vars "picn_commit=$(git rev-parse HEAD)" at bring-up;
+# recorded as PICN_COMMIT in each node's env file (deployed-commit attestation,
+# physical_publishable condition 2).
+picn_commit: "SET_AT_BRINGUP"
+picn_repo_dir: /opt/PiCN
+picn_venv_path: /opt/picn-venv
+picn_user: picn
+picn_group: picn
+
+# --- env contract shared by every node --------------------------------------
+picn_results_dir: /var/lib/picn/results
+# Campaign identity: exported per campaign in the runbook, e.g.
+#   picn_run_id=e2-det-$(date +%s)
+picn_run_id: "SET_PER_CAMPAIGN"
+
+# --- intake campaign parameters (collected in intake.yml too) ----------------
+picn_edges: 2
+picn_seed: 1
+picn_k: 8
+picn_leaf_latency_s: "0.05"
+picn_runs_per_cell: 30
+
+# --- collector (run on the observer during collect) ---------------------------
+skew_threshold_ms: "1.0"

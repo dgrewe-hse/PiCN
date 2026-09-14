@@ -1,0 +1,7 @@
+---
+# chrony appears on the clock tag only.
+- name: restart chrony
+  ansible.builtin.systemd:
+    name: chrony
+    state: restarted
+    enabled: true

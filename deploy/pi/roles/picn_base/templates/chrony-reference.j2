@@ -1,0 +1,8 @@
+# Reference node (intake): authoritative for the bench; also relays upstream
+# servers so it never steps far from wall-clock truth.
+pool 2.debian.pool.ntp.org iburst
+allow 10.0.0.0/24
+local stratum 8
+keyfile /etc/chrony/chrony.keys
+driftfile /var/lib/chrony/chrony.drift
+logdir /var/log/chrony

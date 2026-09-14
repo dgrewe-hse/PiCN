@@ -1,0 +1,10 @@
+# pi-01 — intake: runs the Experiment E campaign (PICN_ROLE=intake delegates
+# to demo.run_physical) and is the chrony reference clock for the bench.
+picn_role: "intake"
+
+# Env contract (demo/physical_node.py). Campaign vars are per-run overrides;
+# PICN_RUN_ID is exported by the runbook at campaign start.
+picn_listen_port: 9100
+picn_edge_id: ""
+picn_owned_prefixes: ""
+picn_backend: "deterministic"

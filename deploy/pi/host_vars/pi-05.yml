@@ -1,0 +1,18 @@
+# pi-05 — producer for edge2: dedicated deterministic serving host. Same
+# prefix slice as its edge (split-deployment variant of the h5-h8 cell: point
+# the intake cell at 10.0.0.15:9102 instead of edge2:9002).
+picn_role: "producer"
+edge_id: "edge2"
+picn_listen_port: 9102
+picn_owned_prefixes:
+  - /cap/fwd/hospital/beds/h5
+  - /cap/fwd/hospital/beds/h6
+  - /cap/fwd/hospital/beds/h7
+  - /cap/fwd/hospital/beds/h8
+picn_backend: "deterministic"
+picn_llm_placement: ""
+picn_model_config: ""
+
+# Upstream peer = intake (edge2 in a two-hop wiring).
+picn_peer_host: "10.0.0.11"
+picn_peer_port: 9100

@@ -1,0 +1,24 @@
+# Experiment E deployment playbook (design v4 §5.6).
+#
+#   ansible-playbook -i deploy/pi/inventory.ini deploy/pi/playbook.yml --tags base,clock
+#   ansible-playbook -i deploy/pi/inventory.ini deploy/pi/playbook.yml --tags deploy
+#   ansible-playbook -i deploy/pi/inventory.ini deploy/pi/playbook.yml --tags healthcheck
+#   ansible-playbook -i deploy/pi/inventory.ini deploy/pi/playbook.yml --tags collect
+#
+# The campaign runner itself is invoked per runbook/bringup.md.
+# Pass the deployment truth: --extra-vars "picn_commit=$(git rev-parse HEAD)"
+---
+- name: Experiment E bench — base provisioning and clock discipline
+  hosts: picn
+  roles:
+    - role: picn_base
+
+- name: Experiment E bench — per-node services
+  hosts: picn
+  roles:
+    - role: picn_node
+
+- name: Experiment E bench — healthcheck and collection
+  hosts: picn
+  roles:
+    - role: picn_measure

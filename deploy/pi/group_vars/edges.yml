@@ -1,0 +1,12 @@
+# [edges] defaults: deterministic serving nodes (design v4 §5.6).
+# PICN_BACKEND selects the producer backend built by
+# demo.physical_topology._make_backend: deterministic | llm.
+
+picn_backend: "deterministic"
+picn_llm_placement: ""
+picn_model_config: ""
+
+# Upstream peer for edges = the intake node (documented peer direction:
+# "intake / upstream edge" — see demo/physical_node.py env contract).
+picn_peer_host: "10.0.0.11"
+picn_peer_port: 9100

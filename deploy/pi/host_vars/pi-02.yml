@@ -1,0 +1,17 @@
+# pi-02 — edge1: AgenticForwarder with registered deterministic producers for
+# h1-h4 (co-located variant of the 2-edge deterministic cell).
+picn_role: "edge"
+edge_id: "edge1"
+picn_listen_port: 9001
+picn_owned_prefixes:
+  - /cap/fwd/hospital/beds/h1
+  - /cap/fwd/hospital/beds/h2
+  - /cap/fwd/hospital/beds/h3
+  - /cap/fwd/hospital/beds/h4
+picn_backend: "deterministic"
+picn_llm_placement: ""
+picn_model_config: ""
+
+# Upstream peer = intake.
+picn_peer_host: "10.0.0.11"
+picn_peer_port: 9100

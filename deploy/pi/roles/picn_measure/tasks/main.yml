@@ -1,0 +1,91 @@
+# picn_measure: healthcheck + collection (design v4 §5.6).
+# healthcheck — verify the deployed env contract and unit state.
+# collect     — fetch every node's results to the observer, then consolidate
+#               with demo.collect_service_records (clock-offset correction,
+#               marker merge into the campaign JSONL).
+
+- name: Deployed interpreter matches the pinned python_version
+  ansible.builtin.command:
+    cmd: >-
+      {{ picn_venv_path }}/bin/python -c
+      "import sys, os; sys.exit(0 if sys.version_info[:2] == tuple(int(p) for p in '{{ python_version }}'.split('.')[:2]) else 1)"
+  changed_when: false
+  become: true
+  tags: [healthcheck]
+
+- name: Env-contract modules import on the deployed tree
+  ansible.builtin.command:
+    cmd: >-
+      {{ picn_venv_path }}/bin/python -c
+      "from demo import physical_node, collect_service_records, run_physical;
+       from agentic.benchmark.physical import physical_publishable"
+    chdir: "{{ picn_repo_dir }}"
+  changed_when: false
+  become: true
+  become_user: "{{ picn_user }}"
+  tags: [healthcheck]
+
+- name: Serving unit active (non-intake roles)
+  ansible.builtin.command:
+    cmd: systemctl is-active picn-node.service
+  changed_when: false
+  when: picn_role != 'intake'
+  become: true
+  tags: [healthcheck]
+
+# --- collect -----------------------------------------------------------------
+
+- name: Stage per-host results on the controller
+  # fetch with flat=false replicates the absolute path under
+  # /tmp/picn-collect/<host>/… e.g. /tmp/picn-collect/pi-02/var/lib/picn/results/markers
+  ansible.builtin.fetch:
+    src: "{{ item }}"
+    dest: /tmp/picn-collect/
+    flat: false
+  loop:
+    - "{{ picn_results_dir }}/markers"
+    - "{{ picn_results_dir }}/service_records"
+    - "{{ picn_results_dir }}/{{ picn_run_id }}.jsonl"
+  failed_when: false   # nodes without campaign JSONL (observer) still contribute markers
+  become: true
+  tags: [collect]
+
+- name: Assemble per-host results on the observer
+  ansible.builtin.copy:
+    src: /tmp/picn-collect/{{ item }}/
+    dest: "{{ picn_results_dir }}/all/{{ item }}/"
+  loop: "{{ groups['picn'] }}"
+  run_once: true
+  delegate_to: "{{ groups['observer'] | first }}"
+  become: true
+  tags: [collect]
+
+- name: Collect per-node results dirs on the observer
+  ansible.builtin.set_fact:
+    # Space-joined for the greedy nargs="+" --results-dir option of
+    # demo.collect_service_records.
+    node_result_dirs: >-
+      {{ groups['picn']
+         | map('format', picn_results_dir ~ '/all/{}' ~ picn_results_dir)
+         | join(' ') }}
+  run_once: true
+  delegate_to: "{{ groups['observer'] | first }}"
+  become: true
+  tags: [collect]
+
+- name: Consolidate service records + attach node markers (clock-offset correction)
+  ansible.builtin.command:
+    cmd: >-
+      {{ picn_venv_path }}/bin/python -m demo.collect_service_records
+      --results-dir {{ node_result_dirs }}
+      --out {{ picn_results_dir }}/physical/{{ picn_run_id }}-corrected.jsonl
+      --merge-into {{ picn_results_dir }}/physical/{{ picn_run_id }}.jsonl
+      --run-id {{ picn_run_id }}
+      --skew-threshold-ms {{ skew_threshold_ms }}
+    chdir: "{{ picn_repo_dir }}"
+  run_once: true
+  delegate_to: "{{ groups['observer'] | first }}"
+  changed_when: true
+  become: true
+  become_user: "{{ picn_user }}"
+  tags: [collect]

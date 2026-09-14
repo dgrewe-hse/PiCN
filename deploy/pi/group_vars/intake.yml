@@ -1,0 +1,24 @@
+# [intake] campaign defaults. The intake node runs the Experiment E runner
+# via the per-node entrypoint (PICN_ROLE=intake delegates to demo.run_physical
+# in demo/physical_node.py:main). Values here land in PICN_SEED / PICN_K /
+# PICN_EDGES / PICN_LEAF_LATENCY_S / PICN_RUNS_PER_CELL.
+
+picn_seed: 1
+picn_k: 8
+picn_edges: 2
+picn_leaf_latency_s: "0.05"
+picn_runs_per_cell: 30
+picn_transport: "udp"
+
+# Deterministic cells: --leaf-latency-s list. LLM cells drop it (Finding 9).
+picn_leaf_latencies: "0.05"
+
+# Edge endpoints of the cell under test (host:port pairs, one per edge).
+# The committed runner builds the same topology in-process; these document
+# the serving hosts the campaign targets (see runbooks/bringup.md).
+picn_edge_endpoints:
+  - "10.0.0.12:9001"   # edge1
+  - "10.0.0.13:9002"   # edge2
+
+# JSONL out dir for kind="physical_run" records (runner --out).
+picn_out_dir: /var/lib/picn/results/physical

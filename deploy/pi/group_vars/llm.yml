@@ -1,0 +1,16 @@
+# [llm] placement and model preference (design v4 §5.3, stages A/C).
+
+# Stage A: Ollama on the Pi itself. Stage C: GPU host reachable on the bench
+# network (set picn_model_endpoint and PICN_LLM_PLACEMENT=off-pi in host_vars).
+picn_llm_placement: "on-pi"
+picn_model_endpoint: "http://127.0.0.1:11434"
+
+# TOML shipped to the node and passed as PICN_MODEL_CONFIG; parsed by
+# agentic.binding.pydantic_ai_backend.load_model_preference. The TOML lives in
+# this directory (group_vars/llm/model.toml) so the model truth is versioned
+# next to the deployment that uses it.
+picn_model_config_src: "{{ playbook_dir }}/group_vars/llm/model.toml"
+picn_model_config: "{{ picn_results_dir }}/model.toml"
+
+# LLM serving node backend label (PICN_BACKEND=llm).
+picn_backend: "llm"

@@ -1,0 +1,12 @@
+# pi-07 — observer: consolidates service records and run markers after a
+# campaign (demo.collect_service_records); hosts no serving stack.
+picn_role: "observer"
+
+# Collector output layout under picn_results_dir:
+#   all/<host>/            fetched per-node results trees (picn_measure)
+#   <run-id>.jsonl         campaign runner records (merged with markers)
+#   <run-id>-corrected.jsonl
+picn_listen_port: 0
+picn_edge_id: ""
+picn_owned_prefixes: ""
+picn_backend: "deterministic"

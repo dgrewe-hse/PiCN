@@ -1,0 +1,95 @@
+# picn_base: python3.14 + PiCN clone at PICN_COMMIT + venv (design v4 §5.6).
+# Tagged base; the clock-sync block is tagged clock (bring-up: --tags base,clock).
+
+- name: Install build prerequisites for CPython {{ python_version }}
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - git
+      - libbz2-dev
+      - libffi-dev
+      - libreadline-dev
+      - libsqlite3-dev
+      - libssl-dev
+      - zlib1g-dev
+    state: present
+    update_cache: true
+  become: true
+  tags: [base]
+
+- name: Ensure picn group
+  ansible.builtin.group:
+    name: "{{ picn_group }}"
+    state: present
+  become: true
+  tags: [base]
+
+- name: Ensure picn user
+  ansible.builtin.user:
+    name: "{{ picn_user }}"
+    group: "{{ picn_group }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+  become: true
+  tags: [base]
+
+- name: Install CPython {{ python_version }} from source
+  ansible.builtin.shell: |-
+    set -o pipefail
+    test -x /usr/local/bin/python{{ python_version }} || {
+      curl -fsSL "https://www.python.org/ftp/python/{{ python_version }}/Python-{{ python_version }}.tgz" \
+        | tar -xz -C /usr/src
+      make -C "/usr/src/Python-{{ python_version }}" -j"$(nproc)" >/dev/null
+      make -C "/usr/src/Python-{{ python_version }}" altinstall >/dev/null
+    }
+  args:
+    executable: /bin/bash
+    creates: /usr/local/bin/python{{ python_version }}
+  become: true
+  tags: [base]
+
+- name: Clone PiCN at PICN_COMMIT ({{ picn_commit }})
+  ansible.builtin.git:
+    repo: "{{ picn_repo }}"
+    dest: "{{ picn_repo_dir }}"
+    version: "{{ picn_commit }}"
+    depth: 1
+  become: true
+  tags: [base]
+
+- name: Create virtualenv and install PiCN editable
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+    chdir: "{{ picn_repo_dir }}"
+  loop:
+    - /usr/local/bin/python{{ python_version }} -m venv "{{ picn_venv_path }}"
+    - "{{ picn_venv_path }}/bin/pip install --upgrade pip"
+    - "{{ picn_venv_path }}/bin/pip install -e \".[dev]\""
+  args:
+    creates: "{{ picn_venv_path }}/bin/python"
+  changed_when: true
+  become: true
+  become_user: "{{ picn_user }}"
+  tags: [base]
+
+# --- clock discipline (tag: clock) -------------------------------------------
+# The intake is the bench reference; every other node follows it via chrony.
+# Measurement procedure and offset recording: runbooks/clock_sync.md.
+
+- name: Install chrony
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+  become: true
+  tags: [clock]
+
+- name: chrony reference (intake) or client (everyone else)
+  ansible.builtin.template:
+    src: "{{ role_path }}/templates/chrony-{{ 'reference' if picn_role == 'intake' else 'client' }}.j2"
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart chrony
+  become: true
+  tags: [clock]

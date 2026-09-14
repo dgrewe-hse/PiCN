@@ -1,0 +1,19 @@
+# pi-06 — LLM producer (stage A: on-Pi Ollama). Serves the full h1-h8 slice;
+# LLM cells point the intake at 10.0.0.16:9103. For stage C (off-Pi GPU),
+# set picn_llm_placement to "off-pi" and picn_peer_host to the GPU endpoint.
+picn_role: "llm"
+edge_id: "edge1"
+picn_listen_port: 9103
+picn_owned_prefixes:
+  - /cap/fwd/hospital/beds/h1
+  - /cap/fwd/hospital/beds/h2
+  - /cap/fwd/hospital/beds/h3
+  - /cap/fwd/hospital/beds/h4
+  - /cap/fwd/hospital/beds/h5
+  - /cap/fwd/hospital/beds/h6
+  - /cap/fwd/hospital/beds/h7
+  - /cap/fwd/hospital/beds/h8
+picn_backend: "llm"
+
+# From group_vars/llm.yml; overridable here.
+picn_llm_placement: "on-pi"

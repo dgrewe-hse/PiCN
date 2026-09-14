@@ -1,0 +1,5 @@
+# Client node: follow the intake reference ({{ picn_intake_host | default('10.0.0.11') }}).
+server {{ picn_intake_host | default('10.0.0.11') }} prefer iburst
+driftfile /var/lib/chrony/chrony.drift
+makestep 1.0 3
+logdir /var/log/chrony

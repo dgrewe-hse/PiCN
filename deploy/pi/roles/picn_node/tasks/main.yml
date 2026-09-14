@@ -1,0 +1,60 @@
+# picn_node: per-node config + systemd unit from the env contract in
+# demo/physical_node.py (PICN_ROLE … PICN_EDGES). Tagged deploy.
+
+- name: Create results tree (markers/, service_records/, physical/)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ picn_user }}"
+    group: "{{ picn_group }}"
+    mode: "0755"
+  loop:
+    - "{{ picn_results_dir }}"
+    - "{{ picn_results_dir }}/markers"
+    - "{{ picn_results_dir }}/service_records"
+    - "{{ picn_results_dir }}/physical"
+  become: true
+  tags: [deploy]
+
+- name: Ship model preference (llm role only)
+  ansible.builtin.copy:
+    src: "{{ picn_model_config_src }}"
+    dest: "{{ picn_model_config }}"
+    owner: "{{ picn_user }}"
+    group: "{{ picn_group }}"
+    mode: "0644"
+  when: picn_role == 'llm'
+  become: true
+  tags: [deploy]
+
+- name: Render node env file ({{ picn_role }})
+  ansible.builtin.template:
+    src: picn-node.env.j2
+    dest: /etc/picn/picn-node.env
+    owner: root
+    group: "{{ picn_group }}"
+    mode: "0640"
+  notify: restart picn-node
+  become: true
+  tags: [deploy]
+
+- name: Install systemd unit
+  ansible.builtin.template:
+    src: picn-node.service.j2
+    dest: "{{ (picn_role == 'intake') | ternary('/etc/systemd/system/picn-intake.service', '/etc/systemd/system/picn-node.service') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart picn-node
+  become: true
+  tags: [deploy]
+
+- name: Enable and start the node unit
+  ansible.builtin.systemd:
+    name: "{{ (picn_role == 'intake') | ternary('picn-intake.service', 'picn-node.service') }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: picn_role != 'intake'   # intake is a oneshot started per campaign
+  become: true
+  tags: [deploy]
