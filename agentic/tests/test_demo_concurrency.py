@@ -36,7 +36,10 @@ async def test_concurrency_cell_serial_positive_latency() -> None:
     assert result.k == 2
     assert result.elapsed_ms > 0
     assert result.trace_root_hex
-    assert result.t_service_ms == pytest.approx(10.0)
+    # T_service is the measured producer wall-clock around the inner invoke,
+    # not a restatement of the nominal latency — hence a band, not approx().
+    assert 9.0 <= result.t_service_ms <= 25.0
+    assert result.extras["t_service_measured_ms"] is not None
     assert result.leaf_inflight_peak >= 1
     assert result.extras["transport"] == "bus"
     assert result.extras["measured"] is True
@@ -51,7 +54,7 @@ async def test_concurrency_cell_concurrent_positive_latency() -> None:
     assert result.k == 4
     assert result.elapsed_ms > 0
     assert result.leaf_inflight_peak >= 1
-    assert result.t_service_ms == pytest.approx(20.0)
+    assert 18.0 <= result.t_service_ms <= 40.0
 
 
 @pytest.mark.asyncio

@@ -174,21 +174,24 @@ async def run_concurrency_cell(
     # Register a LatencyBackend producer per leaf capability. The edge's
     # AgenticLayer is port-less, so the reply traverses the forwarder stack.
     leaf_names: list[Name] = []
+    leaf_backends: list[LatencyBackend] = []
     for i in range(k):
         wire_name = Name((b"cap", b"fwd", b"hospital", b"beds", f"h{i}".encode()))
         desc = _descriptor_with_name(wire_name)
+        backend = LatencyBackend(
+            DeterministicBackend(
+                lambda payload, _i=i: {"beds_free": 10 + _i},
+                input_schema=INPUT_SCHEMA,
+                output_schema=OUTPUT_SCHEMA,
+            ),
+            latency_s=leaf_latency_s,
+        )
         edge.register_capability(
             desc,
-            LatencyBackend(
-                DeterministicBackend(
-                    lambda payload, _i=i: {"beds_free": 10 + _i},
-                    input_schema=INPUT_SCHEMA,
-                    output_schema=OUTPUT_SCHEMA,
-                ),
-                latency_s=leaf_latency_s,
-            ),
+            backend,
             backend_label="latency",
         )
+        leaf_backends.append(backend)
         leaf_names.append(wire_name)
 
     port = _ObserverPort(
@@ -285,9 +288,23 @@ async def run_concurrency_cell(
             (sum(network_vals) / len(network_vals)) * 1000.0 if network_vals else None
         )
 
-        # T_service (producer clock): the LatencyBackend sleep — real and
-        # non-zero when leaf_latency_s > 0 (design v4 §4.2).
-        t_service_ms = leaf_latency_s * 1000.0 if leaf_latency_s > 0 else 0.0
+        # T_service (producer clock): the LatencyBackend's **measured**
+        # per-leaf wall-clock around the inner invoke (VLAD PR-3 follow-up) —
+        # never a restatement of the nominal latency. When no measurement was
+        # recorded the nominal value is used and ``measured`` stays False, so
+        # the gate refuses a five-way attribution on unmeasured service time.
+        measured_s = [
+            b.last_measured_s
+            for b in leaf_backends
+            if b.last_measured_s is not None
+        ]
+        if leaf_latency_s > 0 and measured_s:
+            t_service_ms = (sum(measured_s) / len(measured_s)) * 1000.0
+        elif leaf_latency_s > 0:
+            t_service_ms = leaf_latency_s * 1000.0
+        else:
+            t_service_ms = 0.0
+        service_measured = leaf_latency_s > 0 and bool(measured_s)
 
         # Peak in-flight / overlap (measured from leaf timestamps, intake clock).
         # A leaf is in-flight between its t_send and t_response; the peak is the
@@ -342,7 +359,10 @@ async def run_concurrency_cell(
                 ),
                 "leaf_count": k,
                 "transport": "bus",
-                "measured": leaf_latency_s > 0,
+                "measured": service_measured,
+                "t_service_measured_ms": (
+                    (sum(measured_s) / len(measured_s)) * 1000.0 if measured_s else None
+                ),
             },
         )
     finally:

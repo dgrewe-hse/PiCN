@@ -78,7 +78,10 @@ def _cell_record(
         "t_dispatch_ms": concurrent.t_dispatch_ms,
         "t_network_ms": concurrent.t_network_ms,
         "t_service_ms": concurrent.t_service_ms,
-        "t_service_measured": concurrent.leaf_latency_s > 0,
+        "t_service_measured": (
+            concurrent.leaf_latency_s > 0
+            and concurrent.extras.get("t_service_measured_ms") is not None
+        ),
         "t_aggregate_ms": concurrent.t_aggregate_ms,
         "observer_overhead_ms": None,
         "serial": _t_intent_dict(serial),
