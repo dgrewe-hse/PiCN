@@ -144,3 +144,36 @@ def test_negative_jitter_rejected() -> None:
 def test_requires_inner_backend() -> None:
     with pytest.raises(TypeError):
         LatencyBackend()  # type: ignore[call-arg]
+
+@pytest.mark.asyncio
+async def test_invoke_records_measured_service_time() -> None:
+    """The measured service wall-clock covers sleep + inner invoke (VLAD PR-3)."""
+    backend = _make_backend(latency_s=0.01)
+    await backend.invoke({"x": 5}, deadline=10.0)
+    assert backend.last_measured_s is not None
+    assert 0.01 <= backend.last_measured_s < 0.5
+
+
+@pytest.mark.asyncio
+async def test_measured_false_keeps_record_unmeasured() -> None:
+    backend = _make_backend(latency_s=0.0, measured=False)
+    await backend.invoke({"x": 5}, deadline=10.0)
+    assert backend.measured is False
+    assert backend.last_measured_s is None
+
+
+@pytest.mark.asyncio
+async def test_service_record_reports_measured_accounting() -> None:
+    backend = _make_backend(latency_s=0.01)
+    await backend.invoke({"x": 5}, deadline=10.0)
+    record = backend.service_record()
+    assert record["measured"] is True
+    assert record["measured_s"] is not None and record["measured_s"] >= 0.01
+    assert record["latency_s"] == 0.01
+
+
+def test_service_record_before_invoke_is_unmeasured() -> None:
+    backend = _make_backend(latency_s=0.0, clock=_ManualClock())
+    record = backend.service_record()
+    assert record["measured_s"] is None
+    assert record["latency_s"] == 0.0

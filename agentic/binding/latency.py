@@ -66,6 +66,11 @@ class LatencyBackend:
         self._jitter_s = jitter_s
         self._clock = clock if clock is not None else _default_clock
         self.measured = measured
+        # Honest measured accounting (VLAD PR-3 follow-up): the wall-clock of
+        # the actual sleep + inner invoke, recorded on every ``invoke`` when
+        # ``measured`` is set. ``None`` means "not measured" — never claim it.
+        self.last_measured_s: float | None = None
+        self.last_jitter_s: float = 0.0
         self._jitter_sampler = random.Random(seed) if jitter_s > 0 else None
 
     @property
@@ -77,6 +82,19 @@ class LatencyBackend:
     def latency_s(self) -> float:
         """Base service latency in seconds."""
         return self._latency_s
+
+    def service_record(self) -> dict[str, Any]:
+        """Return the honest measured-accounting record of the last invoke.
+
+        :return: ``measured`` flag, the measured wall-clock ``measured_s``
+            (``None`` when not measured / not yet invoked), and the nominal
+            base ``latency_s`` the wrapper was configured with.
+        """
+        return {
+            "measured": self.measured,
+            "measured_s": self.last_measured_s,
+            "latency_s": self._latency_s,
+        }
 
     def declared_schemas(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Return the inner backend's declared ``(input, output)`` schemas."""
@@ -93,14 +111,22 @@ class LatencyBackend:
     ) -> dict[str, Any]:
         """Sleep for ``latency_s (+ jitter)``, then delegate to the inner backend.
 
-        The sleep models real producer service time so ``T_service`` is a
-        genuine measurement (never zero when ``latency_s > 0``).
+        The **actual** service wall-clock — sleep plus the inner invoke, taken
+        around the whole delegation via the injected clock — is recorded in
+        ``last_measured_s``, so ``T_service`` is a genuine measurement and
+        never restates the nominal parameter.
         """
         jitter = self._next_jitter()
         delay = max(0.0, self._latency_s + jitter)
+        t0 = self._clock()
         if delay > 0:
             await asyncio.sleep(delay)
-        return await self._inner.invoke(payload, deadline=deadline)
+        try:
+            return await self._inner.invoke(payload, deadline=deadline)
+        finally:
+            if self.measured:
+                self.last_measured_s = max(0.0, self._clock() - t0)
+            self.last_jitter_s = jitter
 
 
 __all__ = ["Clock", "LatencyBackend"]
