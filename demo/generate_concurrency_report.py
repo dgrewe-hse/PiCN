@@ -26,27 +26,36 @@ from pathlib import Path
 from typing import Any
 
 from agentic.benchmark.concurrency import CONCURRENCY_RUN_KIND, concurrent_publishable
+from agentic.benchmark.physical import KNOWN_RUN_KINDS
 
-# The exact set of kind literals this generator may reference. Enforced by an
-# AST scan of this file's own source (design v4 §4.5).
-_REFERENCED_KINDS: set[str] = {CONCURRENCY_RUN_KIND}
+# Namespace contract: this generator's source must reference exactly this
+# kind-literal set (checked by test_report_namespace_isolation). The scan
+# is non-self-referential: it filters against the shared full known-kind set
+# (KNOWN_RUN_KINDS = D + E), never against the expected set itself.
+_EXPECTED_KIND_LITERALS: frozenset[str] = frozenset({"concurrency_run"})
 
-HONEST_CAPTION = (
+_HONEST_CAPTION = (
     "SimulationBus mechanism illustration on a single host; deterministic "
     "backends; T_network is near-zero by construction; not a deployment "
     "measurement."
 )
 
+HONEST_CAPTION = _HONEST_CAPTION
+
 
 def _referenced_kinds(source: str) -> set[str]:
-    """Return the ``kind`` string literals referenced in ``source``."""
+    """Return every known run-kind literal referenced in ``source``.
+
+    The scan filters against the shared full known-kind set (D + E) — not
+    against the expected set — so it reports what the source actually says.
+    """
     tree = ast.parse(source)
-    found: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value in _REFERENCED_KINDS:
-                found.add(node.value)
-    return found
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and node.value in KNOWN_RUN_KINDS
+    }
 
 
 def _load_records(path: Path) -> list[dict[str, Any]]:

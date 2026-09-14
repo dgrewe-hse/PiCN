@@ -246,11 +246,18 @@ def test_report_load_records_filters_kind(tmp_path: Path) -> None:
 
 
 def test_report_referenced_kinds_finds_literal() -> None:
+    from pathlib import Path
+
     from demo import generate_concurrency_report as gcr
 
     source = 'x = "concurrency_run"\n'
     assert gcr._referenced_kinds(source) == {CONCURRENCY_RUN_KIND}
-    assert gcr._referenced_kinds("y = 'other'") == set()
+    # Non-self-referential scan: the full known-kind set is considered, so an
+    # unrelated kind literal is *reported*, not silently pre-filtered away.
+    assert gcr._referenced_kinds('x = "physical_run"\n') == {"physical_run"}
+    # The generator's own source must reference exactly its own namespace.
+    own = Path(gcr.__file__).read_text(encoding="utf-8")
+    assert gcr._referenced_kinds(own) == {CONCURRENCY_RUN_KIND}
 
 
 def test_report_summarize_groups_by_k(tmp_path: Path) -> None:
