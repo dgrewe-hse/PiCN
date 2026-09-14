@@ -89,6 +89,14 @@ def test_read_env_config_requires_role(monkeypatch) -> None:
         physical_node.read_env_config()
 
 
+def test_read_env_config_rejects_unknown_role(monkeypatch, tmp_path: Path) -> None:
+    for key, value in _edge_env(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PICN_ROLE", "relay")
+    with pytest.raises(SystemExit):
+        physical_node.read_env_config()
+
+
 # --- per-node run markers ----------------------------------------------------
 
 
@@ -148,6 +156,73 @@ def test_intake_role_delegates_to_run_physical(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr("demo.run_physical.main", fake_main)
     assert physical_node.main([]) == 0
     assert captured and "--edges" in captured[0] and "2" in captured[0]
+
+
+def test_intake_argv_backend_llm_carries_placement_and_model(
+    monkeypatch, tmp_path: Path
+) -> None:
+    for key, value in _edge_env(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PICN_BACKEND", "llm")
+    monkeypatch.setenv("PICN_LLM_PLACEMENT", "off-pi")
+    monkeypatch.setenv("PICN_MODEL_CONFIG", "/tmp/model.toml")
+    monkeypatch.delenv("PICN_LEAF_LATENCY_S", raising=False)
+    config = physical_node.read_env_config()
+    argv = physical_node._intake_argv(config)
+    assert "--backend" in argv and "llm" in argv
+    assert "--llm-placement" in argv and "off-pi" in argv
+    assert "--model-config" in argv and "/tmp/model.toml" in argv
+    # LLM cells drop --leaf-latency-s (Finding 9).
+    assert "--leaf-latency-s" not in argv
+
+
+def test_observer_role_writes_only_markers(monkeypatch, tmp_path: Path) -> None:
+    for key, value in _edge_env(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PICN_ROLE", "observer")
+    monkeypatch.setenv("PICN_NODE_HOST", "pi-07")
+    assert physical_node.main([]) == 0
+    marker_file = tmp_path / "results" / "markers" / "e2-det-1-pi-07.json"
+    ended = json.loads(marker_file.read_text(encoding="utf-8"))
+    assert ended["role"] == "observer" and ended["ended_at"]
+
+
+def test_serving_role_dispatches_to_serve_edge(monkeypatch, tmp_path: Path) -> None:
+    for key, value in _edge_env(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PICN_NODE_HOST", "pi-02")
+    called: list[tuple[str, str]] = []
+
+    async def fake_serve_edge(config, handle, *, host, soak_s=None):
+        called.append((config.role, host))
+        return True
+
+    monkeypatch.setattr(physical_node, "serve_edge", fake_serve_edge)
+    assert physical_node.main([]) == 0
+    assert called == [("edge", "pi-02")]
+
+
+@pytest.mark.asyncio
+async def test_serve_edge_tolerates_wedged_stop(monkeypatch, tmp_path: Path) -> None:
+    for key, value in _edge_env(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    config = physical_node.read_env_config()
+    handle = physical_node.write_start_marker(config, host="pi-02")
+    monkeypatch.setattr(
+        "PiCN.ProgramLibs.AgenticForwarder.AgenticForwarder.stop_forwarder_async",
+        _wedged_stop,
+    )
+    assert await physical_node.serve_edge(config, handle, host="pi-02", soak_s=0.05)
+    ended = json.loads(
+        (tmp_path / "results" / "markers" / "e2-det-1-pi-02.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert ended["ended_at"]
+
+
+async def _wedged_stop(self) -> None:
+    raise RuntimeError("wedged layer stop")
 
 
 # --- clock-offset correction -------------------------------------------------
