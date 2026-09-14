@@ -98,6 +98,13 @@ class AgenticLayer(AsyncLayerProcess):
         # Kept off the frozen InboundRequest union so both adapters stay
         # untouched. Emptied on stop_port.
         self._inbound_reply_ref: dict[bytes, int] = {}
+        # Concurrent inbound-request serving (PR-3): each InboundRequest is
+        # served as its own task so producer backends overlap. The serving set
+        # keeps strong references (an unreferenced task can be GC'd mid-flight)
+        # and is drained on stop_port. Serving concurrency is bounded by the
+        # same bound as the inbound event queue (ADR-005 boundedness).
+        self._serving: set[asyncio.Task[None]] = set()
+        self._serving_sem = asyncio.Semaphore(inbound_size)
 
     @property
     def hub(self) -> CapabilityProducerHub:
@@ -161,7 +168,7 @@ class AgenticLayer(AsyncLayerProcess):
         )
 
     async def stop_port(self) -> None:
-        """Stop the event pump and the port."""
+        """Stop the event pump, cancel in-flight serving tasks, and the port."""
         if self._event_task is not None:
             self._event_task.cancel()
             try:
@@ -169,6 +176,10 @@ class AgenticLayer(AsyncLayerProcess):
             except asyncio.CancelledError:
                 pass
             self._event_task = None
+        if self._serving:
+            for task in self._serving:
+                task.cancel()
+            await asyncio.gather(*self._serving, return_exceptions=True)
         if self._port is not None and self._started_port:
             await self._port.stop()
         self._started_port = False
@@ -186,9 +197,53 @@ class AgenticLayer(AsyncLayerProcess):
         try:
             while True:
                 event = await self._inbound.get()
-                await self._dispatch_event(event)
+                if isinstance(event, InboundRequest):
+                    # PR-3: serve producer requests concurrently — the serving
+                    # task takes over and the pump immediately awaits the next
+                    # event. Response/timeout/failure events keep their strict
+                    # sequential handling so PIT mutations stay ordered.
+                    self._spawn_serving(event)
+                else:
+                    await self._dispatch_event(event)
         except asyncio.CancelledError:
             raise
+
+    def _spawn_serving(self, event: InboundRequest) -> None:
+        """Hand one ``InboundRequest`` to its own serving task (bounded).
+
+        :param event: The inbound request to serve.
+        """
+        task = asyncio.create_task(
+            self._serve_inbound(event), name="agentic-serve-inbound"
+        )
+        self._serving.add(task)
+        task.add_done_callback(self._serving_done)
+
+    async def _serve_inbound(self, event: InboundRequest) -> None:
+        """Serve one inbound request, bounded by the inbound queue bound.
+
+        The event loop is single-threaded: serving tasks interleave only at
+        ``await`` points, so layer state (reply-ref table, hub, PIT) is mutated
+        without data races; the semaphore keeps in-flight service bounded like
+        the event queue itself (ADR-005).
+
+        :param event: The inbound request to serve.
+        """
+        async with self._serving_sem:
+            await self._dispatch_event(event)
+
+    def _serving_done(self, task: asyncio.Task[None]) -> None:
+        """Discard a finished serving task and surface unexpected failures.
+
+        :param task: The completed serving task.
+        """
+        self._serving.discard(task)
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                self.logger.error(
+                    "inbound request serving failed: %r", exc, exc_info=exc
+                )
 
     async def _dispatch_event(self, event: SubstrateEvent) -> None:
         if isinstance(event, InboundRequest):
@@ -496,8 +551,9 @@ class AgenticLayer(AsyncLayerProcess):
 
         Dispatch policy (NF-7): when the port pump is running, enqueue onto the
         layer-owned ``_inbound`` so port and stack events share one ordered
-        pump; on a port-less forwarder the layer's own run loop **is** the pump,
-        so dispatch inline via the SAME ``_dispatch_event`` dispatcher.
+        pump; on a port-less forwarder the request is handed to the same
+        concurrent serving task path (PR-3) so producer backends overlap while
+        the layer's run loop stays free to receive the next packet (NF-9).
         """
         item = data.item if isinstance(data, Outbound) else data
         if not isinstance(item, (list, tuple)) or len(item) != 2:
@@ -521,7 +577,7 @@ class AgenticLayer(AsyncLayerProcess):
         if self._started_port:
             await self._inbound.put(inbound)
         else:
-            await self._dispatch_event(inbound)
+            self._spawn_serving(inbound)
 
     async def data_from_higher(
         self,

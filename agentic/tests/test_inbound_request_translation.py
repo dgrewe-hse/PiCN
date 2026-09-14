@@ -6,8 +6,10 @@
 
 """NF-7/NF-4: producer Interest → InboundRequest translation on data_from_lower.
 
-The port-less path dispatches inline via ``_dispatch_event``; the port path
-enqueues onto ``_inbound``. Malformed input never raises.
+The port-less path hands the request to a concurrent serving task via
+``_dispatch_event`` (PR-3); the port path enqueues onto ``_inbound``. Malformed
+input never raises. Serving is asynchronous — tests drain for the dispatched
+event instead of relying on inline completion.
 """
 
 from __future__ import annotations
@@ -32,6 +34,15 @@ def _face_interest(name: str, face_id: int) -> list[object]:
     return [face_id, Interest(PicnName(name))]
 
 
+async def _drain_until(predicate, *, tries: int = 400, delay: float = 0.005) -> bool:
+    """Poll an async predicate so spawned serving tasks can complete."""
+    for _ in range(tries):
+        if predicate():
+            return True
+        await asyncio.sleep(delay)
+    return predicate()
+
+
 @pytest.mark.asyncio
 async def test_portless_translates_and_dispatches_with_reply_ref() -> None:
     layer = AgenticLayer(runtime="async")
@@ -47,8 +58,9 @@ async def test_portless_translates_and_dispatches_with_reply_ref() -> None:
 
     face_id = 42
     await layer.data_from_lower(layer.queue_to_lower, None, _face_interest("/cap/x/v=1", face_id))
+    ok = await _drain_until(lambda: len(seen) == 1)
+    assert ok, "port-less data_from_lower did not serve the InboundRequest"
 
-    assert len(seen) == 1
     event = seen[0]
     expected = hashlib.sha256(b"inbound:" + b"cap/x/v=1").digest()
     assert event.correlation == expected
@@ -63,7 +75,8 @@ async def test_typed_item_tuple_variant_accepted() -> None:
     layer._dispatch_event = _record(seen)  # type: ignore[method-assign]
 
     await layer.data_from_lower(None, None, (5, Interest(PicnName("/cap/y/v=1"))))
-    assert len(seen) == 1
+    ok = await _drain_until(lambda: len(seen) == 1)
+    assert ok, "tuple-variant data_from_lower did not serve the InboundRequest"
     assert layer._inbound_reply_ref.get(seen[0].correlation) == 5
 
 
@@ -114,4 +127,6 @@ async def test_repeated_inbound_same_name_is_deterministic() -> None:
     layer._dispatch_event = _record(seen)  # type: ignore[method-assign]
     for _ in range(3):
         await layer.data_from_lower(None, None, _face_interest("/cap/x/v=1", 1))
+    ok = await _drain_until(lambda: len(seen) == 3)
+    assert ok, "repeated inbound requests were not all served"
     assert [e.correlation for e in seen] == [seen[0].correlation] * 3
