@@ -38,10 +38,21 @@ def _outstanding_port(*integers: bytes) -> PicnSubstratePort:
 def test_prefix_trap() -> None:
     """h10 Content must match the h10 Interest, not h1 (and vice versa)."""
     assert not _bed(b"h1").is_prefix_of(_bed(b"h10"))
-    assert Name(BEDS + (b"h10",)).components[:4] == Name(BEDS).components
 
-    # h1 registered first: dict insertion order would let the reverse clause
-    # hand the h10 Content to the h1 Interest.
+    # Two prefix Interests can both satisfy one Content; the scan returns the
+    # first in insertion order. (``_match_outstanding`` is a first-prefix scan,
+    # not a longest-prefix selection -- LPM is only claimed for the FIB path.)
+    parent_first = _outstanding_port(b"h1", b"h10")
+    parent_first._outstanding[b"corr-beds"] = Name(BEDS)
+    assert parent_first._match_outstanding(_bed(b"h1")) == b"corr-h1"
+
+    beds_first = PicnSubstratePort("127.0.0.1", 9, log_level=255)
+    beds_first._outstanding[b"corr-beds"] = Name(BEDS)
+    beds_first._outstanding[b"corr-h1"] = _bed(b"h1")
+    assert beds_first._match_outstanding(_bed(b"h1")) == b"corr-beds"
+
+    # Sibling prefix trap: h10 Content must never resolve to the h1 Interest,
+    # nor h1 Content to the h10 Interest.
     h1_first = _outstanding_port(b"h1", b"h10")
     assert h1_first._match_outstanding(_bed(b"h10")) == b"corr-h10"
     assert h1_first._match_outstanding(_bed(b"h1")) == b"corr-h1"
@@ -50,6 +61,16 @@ def test_prefix_trap() -> None:
     h10_first = _outstanding_port(b"h10", b"h1")
     assert h10_first._match_outstanding(_bed(b"h1")) == b"corr-h1"
     assert h10_first._match_outstanding(_bed(b"h10")) == b"corr-h10"
+
+    # The h1/h10 trap proper: with a single h10 Interest outstanding, a Content
+    # named for the shared parent "/.../beds" is SHORTER than the Interest name.
+    # The parent is a component-prefix of the h10 Interest, so the reverse
+    # clause matched it (beds <- h10) and returned the h10 correlation for a
+    # Content that never named h10. Directional LPM rejects it.
+    assert Name(BEDS).is_prefix_of(_bed(b"h10"))
+    reverse_trap = _outstanding_port(b"h10")
+    assert reverse_trap._match_outstanding(_bed(b"h10")) == b"corr-h10"
+    assert reverse_trap._match_outstanding(Name(BEDS)) is None
 
 
 def test_directional_lpm() -> None:

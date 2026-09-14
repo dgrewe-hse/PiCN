@@ -280,11 +280,18 @@ class PicnSubstratePort:
         )
 
     def _match_outstanding(self, content_name: Name) -> bytes | None:
-        """Return correlation for an outstanding Interest matching ``content_name``."""
+        """Return correlation for an outstanding Interest matching ``content_name``.
+
+        Matching is directional longest-prefix (A-012): a Content satisfies an
+        Interest iff the Interest name is a component-prefix of the Content
+        name. Equality is subsumed by ``is_prefix_of`` (inclusive). The old
+        reverse clause is deleted: it is not valid ICN semantics and, for
+        prefix-overlapping Interests such as ``.../h1`` and ``.../h10``,
+        returned the wrong correlation in dict order and corrupted the Merkle
+        trace root.
+        """
         for correlation, interest_name in self._outstanding.items():
-            if interest_name == content_name or interest_name.is_prefix_of(content_name):
-                return correlation
-            if content_name.is_prefix_of(interest_name):
+            if interest_name.is_prefix_of(content_name):
                 return correlation
         return None
 
@@ -292,6 +299,8 @@ class PicnSubstratePort:
         body = packet[1] if isinstance(packet, (list, tuple)) else packet
         if isinstance(body, Content):
             content_name = from_picn_name(body.name)
+            # Match on the wire name directly: the port's Name is components of
+            # the PiCN name, so no re-encoding is needed.
             correlation = self._match_outstanding(content_name)
             if correlation is None:
                 return
