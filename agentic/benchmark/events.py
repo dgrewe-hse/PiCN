@@ -23,6 +23,24 @@ EventKind = Literal[
     "dispatch_count",
     "aggregation_complete",
     "artefact_bytes",
+    # Experiment D — T_intent decomposition + concurrency fan-out (design v4 §4.3).
+    # NOTE: ``config_snapshot`` is deliberately NOT here — it lives in
+    # ``RunMetadata.parameters["config_snapshot"]`` (ARCO Finding 11).
+    "t_intent_ms",
+    "t_decompose_ms",
+    "t_dispatch_ms",
+    "t_network_ms",
+    "t_service_ms",
+    "t_aggregate_ms",
+    "t_dispatch_residual_ms",
+    "fanout_serial_ms",
+    "fanout_concurrent_ms",
+    "fanout_speedup",
+    "leaf_inflight_peak",
+    "leaf_overlap_fraction",
+    "leaf_start_ms",
+    "leaf_end_ms",
+    "observer_overhead_ms",
 ]
 
 

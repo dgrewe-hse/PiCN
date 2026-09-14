@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import time
 from typing import Any
 
 from PiCN.Packets import Content, Name as PicnName, Interest
@@ -30,7 +31,12 @@ from agentic.agentic_layer.cfib import CapabilityFIB
 from agentic.agentic_layer.context_pit import ContextPIT
 from agentic.agentic_layer.decomposer import BoundedDecomposer, SubIntent
 from agentic.agentic_layer.descriptor import CapabilityDescriptor
+from agentic.agentic_layer.dispatch import DispatchMode
 from agentic.agentic_layer.naming import CapabilityNamingError, parse_capability_name
+from agentic.agentic_layer.observer import (
+    LatencyObserver,
+    NullLatencyObserver,
+)
 from agentic.agentic_layer.producer import CapabilityProducerHub, QuoteIdProvider
 from agentic.agentic_layer.runtime import require_async_runtime
 from agentic.binding.protocol import CapabilityBackend
@@ -58,6 +64,7 @@ class AgenticLayer(AsyncLayerProcess):
     :param port: Optional substrate port (mock or PiCN adapter).
     :param inbound_size: Bound for the port event queue.
     :param quote_id_provider: Optional callback supplying attestation quote ids.
+    :param observer: Optional ``LatencyObserver`` (defaults to a null no-op).
     """
 
     def __init__(
@@ -68,6 +75,7 @@ class AgenticLayer(AsyncLayerProcess):
         port: SubstratePort | None = None,
         inbound_size: int = DEFAULT_INBOUND_SIZE,
         quote_id_provider: QuoteIdProvider | None = None,
+        observer: LatencyObserver | None = None,
     ) -> None:
         require_async_runtime(runtime)
         super().__init__(logger_name="AgenticLayer", log_level=log_level)
@@ -81,6 +89,10 @@ class AgenticLayer(AsyncLayerProcess):
         self._leaf_index: dict[bytes, tuple[bytes, int]] = {}
         self._parent_done: dict[bytes, asyncio.Future[bytes]] = {}
         self._started_port = False
+        # Passive timing sink (design v4 §4.2): the layer calls hooks only and
+        # never computes derived metrics or emits MetricEvents. The default is
+        # a no-op so the hot path carries no measurement cost unless injected.
+        self._observer = observer if observer is not None else NullLatencyObserver()
         # Inbound reply-face side table (NF-4 Option 2): keyed by the inbound
         # correlation, holds the face id the response must be returned to.
         # Kept off the frozen InboundRequest union so both adapters stay
@@ -98,6 +110,11 @@ class AgenticLayer(AsyncLayerProcess):
     @property
     def pit(self) -> ContextPIT:
         return self._pit
+
+    @property
+    def observer(self) -> LatencyObserver:
+        """The injected latency observer (never ``None``; a null no-op by default)."""
+        return self._observer
 
     @property
     def port(self) -> SubstratePort | None:
@@ -183,6 +200,18 @@ class AgenticLayer(AsyncLayerProcess):
         elif isinstance(event, RequestFailed):
             await self._on_failed(event)
         elif isinstance(event, RequestSent):
+            # Observer (design v4 §4.2): t_send is the port-clock RequestSent
+            # timestamp; the mapping must already exist (prepass guarantees it).
+            mapping = self._leaf_index.get(event.correlation)
+            if mapping is not None:
+                parent, leaf_index = mapping
+                self._observer.on_leaf_forwarded(
+                    correlation=event.correlation,
+                    parent=parent,
+                    leaf_index=leaf_index,
+                    name=event.name,
+                    t_send=event.at,
+                )
             return
 
     async def _on_inbound_request(self, event: InboundRequest) -> None:
@@ -268,6 +297,13 @@ class AgenticLayer(AsyncLayerProcess):
             return
         digest = hashlib.sha256(event.payload).digest()
         self._pit.record_response(parent, leaf_index, digest)
+        # Observer (design v4 §4.2): t_response is the port-clock arrival time.
+        self._observer.on_leaf_response(
+            correlation=event.correlation,
+            parent=parent,
+            leaf_index=leaf_index,
+            t_response=event.at,
+        )
         await self._maybe_finish(parent, now_ms=int(event.at * 1000))
 
     async def _on_timeout(self, event: RequestTimedOut) -> None:
@@ -305,6 +341,11 @@ class AgenticLayer(AsyncLayerProcess):
         completed = maybe_complete(self._pit, parent, now_ms)
         if completed is None:
             return
+        # Observer (design v4 §4.2): t_agg is the intake monotonic clock at the
+        # moment aggregation completes (trace root final).
+        self._observer.on_aggregate(
+            parent=parent, t_aggregate=time.perf_counter(), trace_root=completed.trace_root
+        )
         fut = self._parent_done.get(parent)
         if fut is not None and not fut.done():
             fut.set_result(completed.trace_root)
@@ -321,7 +362,8 @@ class AgenticLayer(AsyncLayerProcess):
         credential: bytes = b"",
         deadline: float,
         now_ms: int = 0,
-        dispatch: str = "serial",
+        dispatch: str | DispatchMode = "serial",
+        emission_ts: float | None = None,
     ) -> bytes:
         """Commit the expected set, forward sub-intents, await aggregation.
 
@@ -331,12 +373,14 @@ class AgenticLayer(AsyncLayerProcess):
             ``\"concurrent\"``. The concurrent branch runs one TaskGroup leaf
             per sub-intent; a failed/cancelled leaf emits an accountable NULL
             and ``done`` always resolves.
+        :param emission_ts: Caller-supplied ``time.perf_counter()`` captured
+            immediately before the call. When absent, ``T_decompose`` is not
+            reported (never mis-sourced) — design v4 §4.2.
         :return: Final Merkle trace root.
         """
         if self._port is None or not self._started_port:
             raise RuntimeError("start_port() required before submit_intent")
-        if dispatch not in ("serial", "concurrent"):
-            raise ValueError(f"unknown dispatch: {dispatch!r}")
+        mode = DispatchMode.coerce(dispatch)
         port = self._port
         leaf_specs: list[tuple[bytes, bytes, int | None, tuple[str, ...], bytes]] = []
         for sub in sub_intents:
@@ -365,6 +409,16 @@ class AgenticLayer(AsyncLayerProcess):
         done: asyncio.Future[bytes] = loop.create_future()
         self._parent_done[parent_intent_digest] = done
 
+        # Observer (design v4 §4.2): the intake monotonic clock captures t0/t1
+        # (wall-time dispatch) and t_intent; emission_ts (caller-supplied) is the
+        # only source of T_decompose — never invented here.
+        t_commit = time.perf_counter()
+        self._observer.on_commit(
+            parent=parent_intent_digest, t_commit=t_commit, leaf_count=len(entry.leaves)
+        )
+        t0 = time.perf_counter()
+        self._observer.on_dispatch_begin(parent=parent_intent_digest, t0=t0)
+
         # Forward only after commit (I2). Prepass first: every correlation is
         # registered and marked forwarded before any dispatch, so a fast reply
         # can never race an unpopulated leaf mapping.
@@ -381,7 +435,7 @@ class AgenticLayer(AsyncLayerProcess):
             )
             sends.append((name, leaf.payload, correlation))
 
-        if dispatch == "serial":
+        if mode is DispatchMode.SERIAL:
             for name, leaf_payload, correlation in sends:
                 await port.send_request(
                     name,
@@ -389,10 +443,14 @@ class AgenticLayer(AsyncLayerProcess):
                     correlation=correlation,
                     deadline=deadline,
                 )
-            return await done
+            t1 = time.perf_counter()
+            self._observer.on_dispatch_end(parent=parent_intent_digest, t1=t1)
+            root = await done
+            self._observer.on_complete(parent=parent_intent_digest, t_intent=time.perf_counter())
+            return root
 
         async def _dispatch_leaf(
-            name: Name, leaf_payload: bytes, correlation: bytes
+            name: Name, leaf_payload: bytes, correlation: bytes, leaf_index: int
         ) -> None:
             try:
                 await port.send_request(
@@ -403,17 +461,26 @@ class AgenticLayer(AsyncLayerProcess):
                 )
             except asyncio.CancelledError:
                 # Re-cancel after recording an accountable NULL so done resolves.
-                parent, leaf_index = self._leaf_index[correlation]
-                await self._record_leaf_failure(parent, leaf_index, now_ms=now_ms)
+                await self._record_leaf_failure(
+                    parent_intent_digest, leaf_index, now_ms=now_ms
+                )
                 raise
             except Exception:
-                parent, leaf_index = self._leaf_index[correlation]
-                await self._record_leaf_failure(parent, leaf_index, now_ms=now_ms)
+                await self._record_leaf_failure(
+                    parent_intent_digest, leaf_index, now_ms=now_ms
+                )
 
         async with asyncio.TaskGroup() as tg:
             for name, leaf_payload, correlation in sends:
-                tg.create_task(_dispatch_leaf(name, leaf_payload, correlation))
-        return await done
+                leaf_index = self._leaf_index[correlation][1]
+                tg.create_task(
+                    _dispatch_leaf(name, leaf_payload, correlation, leaf_index)
+                )
+        t1 = time.perf_counter()
+        self._observer.on_dispatch_end(parent=parent_intent_digest, t1=t1)
+        root = await done
+        self._observer.on_complete(parent=parent_intent_digest, t_intent=time.perf_counter())
+        return root
 
     async def data_from_lower(
         self,

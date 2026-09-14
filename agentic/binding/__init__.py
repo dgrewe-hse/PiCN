@@ -13,6 +13,7 @@ authoritative.
 """
 
 from agentic.binding.deterministic import DeterministicBackend
+from agentic.binding.latency import LatencyBackend
 from agentic.binding.protocol import CapabilityBackend
 from agentic.binding.registry import (
     BindingResponse,
@@ -33,6 +34,7 @@ __all__ = [
     "CapabilityRegistration",
     "CapabilityRegistry",
     "DeterministicBackend",
+    "LatencyBackend",
     "SchemaCompatibilityError",
     "SchemaProfileError",
     "assert_restricted_profile",

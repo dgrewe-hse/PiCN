@@ -12,6 +12,12 @@ Rollups are derived from raw events and always group by transport.
 """
 
 from agentic.benchmark.capacity import assert_bus_capacity
+from agentic.benchmark.concurrency import (
+    CONCURRENCY_RUN_KIND,
+    build_concurrency_cell,
+    concurrent_publishable,
+    fanout_speedup,
+)
 from agentic.benchmark.errors import HarnessError
 from agentic.benchmark.harness import MeasurementHarness, RunConfig
 from agentic.benchmark.metadata import RunMetadata, require_run_metadata
@@ -20,6 +26,7 @@ from agentic.benchmark.rollup import rollup_by_transport
 from agentic.benchmark.sweep import SweepSpec, load_jsonl, run_sweep
 
 __all__ = [
+    "CONCURRENCY_RUN_KIND",
     "HarnessError",
     "MeasurementHarness",
     "MetricsSnapshot",
@@ -27,7 +34,10 @@ __all__ = [
     "RunMetadata",
     "SweepSpec",
     "assert_bus_capacity",
+    "build_concurrency_cell",
     "compute_metrics",
+    "concurrent_publishable",
+    "fanout_speedup",
     "load_jsonl",
     "require_run_metadata",
     "rollup_by_transport",

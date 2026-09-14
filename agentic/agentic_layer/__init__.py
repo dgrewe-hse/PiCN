@@ -43,6 +43,12 @@ from agentic.agentic_layer.decomposer import (
     load_template,
 )
 from agentic.agentic_layer.descriptor import CapabilityDescriptor, register_descriptor
+from agentic.agentic_layer.dispatch import DispatchMode
+from agentic.agentic_layer.observer import (
+    LatencyObserver,
+    NullLatencyObserver,
+    RecordingLatencyObserver,
+)
 from agentic.agentic_layer.layer import AgenticLayer
 from agentic.agentic_layer.naming import (
     CapabilityNamingError,
@@ -87,10 +93,14 @@ __all__ = [
     "ContextPIT",
     "ContextPitEntry",
     "ContextPitLeaf",
+    "DispatchMode",
+    "LatencyObserver",
     "MatchConstraints",
+    "NullLatencyObserver",
     "ParsedCapabilityName",
     "QuorumPolicy",
     "QuoteIdProvider",
+    "RecordingLatencyObserver",
     "RegisteredProducer",
     "SteerRejected",
     "SubIntent",

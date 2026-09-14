@@ -58,6 +58,23 @@ class MetricsSnapshot:
     dispatch_count: float | None = None
     aggregation_complete: float | None = None
     artefact_bytes_total: float | None = None
+    # Experiment D — concurrency fan-out + T_intent decomposition (design v4 §4.3).
+    # All None-default; existing event sets produce these as None (backward compat).
+    concurrent_publishable: bool | None = None
+    fanout_serial_ms: float | None = None
+    fanout_concurrent_ms: float | None = None
+    fanout_speedup: float | None = None
+    leaf_inflight_peak: float | None = None
+    leaf_overlap_fraction: float | None = None
+    t_intent_ms: float | None = None
+    t_decompose_ms: float | None = None
+    t_dispatch_ms: float | None = None
+    t_network_ms: float | None = None
+    t_service_ms: float | None = None
+    t_aggregate_ms: float | None = None
+    t_dispatch_residual_ms: float | None = None
+    observer_overhead_ms: float | None = None
+    physical_publishable: bool | None = None
 
     @property
     def nfn_stack_overhead_publishable(self) -> bool:
@@ -68,6 +85,21 @@ class MetricsSnapshot:
     def nfn_stack_overhead_ratio(self) -> float | None:
         """Paper-facing alias for ``m3_overhead_ratio``."""
         return self.m3_overhead_ratio
+
+    @property
+    def concurrent_dispatch_publishable(self) -> bool | None:
+        """Paper-facing alias for ``concurrent_publishable`` (design v4 §4.3)."""
+        return self.concurrent_publishable
+
+    @property
+    def physical_deployment_publishable(self) -> bool | None:
+        """Paper-facing alias for ``physical_publishable`` (design v4 §4.3)."""
+        return self.physical_publishable
+
+    @property
+    def t_intent_total_ms(self) -> float | None:
+        """Paper-facing alias for ``t_intent_ms`` (design v4 §4.3)."""
+        return self.t_intent_ms
 
 
 def compute_metrics(events: Sequence[MetricEvent], *, transport: str) -> MetricsSnapshot:
@@ -116,6 +148,24 @@ def compute_metrics(events: Sequence[MetricEvent], *, transport: str) -> Metrics
     aggs = [e.value for e in events if e.kind == "aggregation_complete"]
     artefact = [e.value for e in events if e.kind == "artefact_bytes"]
 
+    # Experiment D — additive tail block. Existing event sets (no new kinds)
+    # produce all-None, byte-identical output (design v4 §4.3 / §6.3).
+    def _mean_of(kind: str) -> float | None:
+        vals = [e.value for e in events if e.kind == kind]
+        return mean(vals) if vals else None
+
+    def _sum_of(kind: str) -> float | None:
+        vals = [e.value for e in events if e.kind == kind]
+        return sum(vals) if vals else None
+
+    # ``concurrent_publishable`` and ``physical_publishable`` are booleans, not
+    # latencies: they are carried through labels (never averaged).
+    def _bool_of(kind: str) -> bool | None:
+        vals = [e.value for e in events if e.kind == kind]
+        if not vals:
+            return None
+        return all(bool(v) for v in vals)
+
     return MetricsSnapshot(
         transport=transport,
         m1_latency_ms=mean(latencies) if latencies else None,
@@ -129,6 +179,23 @@ def compute_metrics(events: Sequence[MetricEvent], *, transport: str) -> Metrics
         dispatch_count=sum(dispatches) if dispatches else None,
         aggregation_complete=sum(aggs) if aggs else None,
         artefact_bytes_total=sum(artefact) if artefact else None,
+        concurrent_publishable=_bool_of("concurrent_publishable"),
+        fanout_serial_ms=_mean_of("fanout_serial_ms"),
+        fanout_concurrent_ms=_mean_of("fanout_concurrent_ms"),
+        fanout_speedup=_mean_of("fanout_speedup"),
+        leaf_inflight_peak=max(
+            [e.value for e in events if e.kind == "leaf_inflight_peak"] or [0.0]
+        ),
+        leaf_overlap_fraction=_mean_of("leaf_overlap_fraction"),
+        t_intent_ms=_mean_of("t_intent_ms"),
+        t_decompose_ms=_mean_of("t_decompose_ms"),
+        t_dispatch_ms=_mean_of("t_dispatch_ms"),
+        t_network_ms=_mean_of("t_network_ms"),
+        t_service_ms=_mean_of("t_service_ms"),
+        t_aggregate_ms=_mean_of("t_aggregate_ms"),
+        t_dispatch_residual_ms=_mean_of("t_dispatch_residual_ms"),
+        observer_overhead_ms=_mean_of("observer_overhead_ms"),
+        physical_publishable=_bool_of("physical_publishable"),
     )
 
 
