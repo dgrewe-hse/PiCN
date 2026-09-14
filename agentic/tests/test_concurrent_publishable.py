@@ -165,6 +165,19 @@ def test_refuse_differing_leaf_set() -> None:
     assert concurrent_publishable(rec) is False
 
 
+def test_refuse_empty_leaf_set_digest() -> None:
+    """A missing/empty expected_subintent_set digest is not a paired leaf set."""
+    rec = _record()
+    rec["expected_subintent_set_serial"] = ""
+    assert concurrent_publishable(rec) is False
+
+
+def test_refuse_unknown_view() -> None:
+    """A T_intent_view other than 'A'/'B' is refused."""
+    rec = _record(view="C")
+    assert concurrent_publishable(rec) is False
+
+
 def test_refuse_zero_t_service_five_way() -> None:
     """Five-way decomposition with zero T_service is not publishable."""
     rec = _record(t_service_ms=0.0, measured=True)
