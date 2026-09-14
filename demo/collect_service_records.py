@@ -41,9 +41,14 @@ from typing import Any, Mapping, Sequence
 
 # Service-record fields, in the collector's unit (ms). The design's ns unit
 # (t_service_ns / clock_offset_ns, design v2 §"Producer-side t_service") is
-# accepted and normalised for backwards compatibility with early node images.
+# accepted and normalised for backwards compatibility with early node images
+# (both the t_service_ns and the service_measured_ns spellings).
 _MS_FIELDS = ("service_measured_ms", "clock_offset_ms")
-_NS_TO_MS_FIELDS = {"t_service_ns": "service_measured_ms", "clock_offset_ns": "clock_offset_ms"}
+_NS_TO_MS_FIELDS = {
+    "t_service_ns": "service_measured_ms",
+    "service_measured_ns": "service_measured_ms",
+    "clock_offset_ns": "clock_offset_ms",
+}
 
 DEFAULT_SKEW_THRESHOLD_MS = 1.0
 
