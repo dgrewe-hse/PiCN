@@ -187,9 +187,9 @@ async def test_put_hard_fails_when_started_without_inbound() -> None:
         await port._put(RequestSent(correlation=b"c", name=Name((b"x",)), at=0.0))
 
 
-def test_match_outstanding_reverse_prefix() -> None:
+def test_match_outstanding_forward_prefix() -> None:
     port = PicnSubstratePort("127.0.0.1", 9, log_level=255)
-    port._outstanding[b"corr"] = Name((b"a", b"b", b"c"))
-    # Content name is a prefix of the outstanding interest name → reverse match.
-    assert port._match_outstanding(Name((b"a", b"b"))) == b"corr"
+    port._outstanding[b"corr"] = Name((b"a", b"b"))
+    # Interest name is a prefix of the Content name → forward directional match.
+    assert port._match_outstanding(Name((b"a", b"b", b"c"))) == b"corr"
     assert port._match_outstanding(Name((b"z",))) is None
