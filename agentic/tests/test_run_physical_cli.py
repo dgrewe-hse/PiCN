@@ -26,7 +26,8 @@ import pytest
 # pre-existing registry<->layer circular import resolves in a stable order.
 from agentic.agentic_layer.descriptor import CapabilityDescriptor  # noqa: F401
 from demo import run_physical
-from demo.run_physical import main
+from demo.physical_topology import PhysicalLeafOutcome, PhysicalRunResult, leaf_name_str
+from demo.run_physical import main, parse_edge_endpoints
 
 
 def _campaign_args(tmp_path: Path, **overrides: str) -> list[str]:
@@ -254,3 +255,128 @@ def test_llm_backend_missing_model_config_refused(tmp_path: Path) -> None:
                 },
             )
         )
+
+
+# --- --edge-endpoints: targeting deployed (remote) bench edges ----------------
+
+
+def _fake_physical_result() -> PhysicalRunResult:
+    leaves = [
+        PhysicalLeafOutcome(
+            leaf_index=index,
+            name=leaf_name_str(index),
+            edge_id=f"edge{index + 1}",
+            served_by_host="10.0.0.12",
+            inference_ms=None,
+            transport_ms=1.0,
+            service_ms=None,
+        )
+        for index in range(2)
+    ]
+    return PhysicalRunResult(
+        run_id="remote-1",
+        seed=1,
+        k=2,
+        edges=2,
+        backend="deterministic",
+        llm_placement=None,
+        leaf_latency_s=0.01,
+        transport="udp",
+        dispatch="concurrent",
+        elapsed_ms=1.0,
+        trace_root_hex="ab" * 32,
+        trace_root_verified=True,
+        t_decompose_ms=1.0,
+        t_dispatch_ms=1.0,
+        t_network_ms=1.0,
+        t_service_ms=None,
+        t_aggregate_ms=1.0,
+        t_intent_ms=1.0,
+        leaves=leaves,
+        per_edge_leaf_counts={"edge1": 1, "edge2": 1},
+        clock_offset_ms=0.0,
+        hosts=["pi-01"],
+    )
+
+
+def test_parse_edge_endpoints_comma_and_repeated_form() -> None:
+    expected = [("10.0.0.12", 9001), ("10.0.0.13", 9002)]
+    assert parse_edge_endpoints(
+        ["edge1=10.0.0.12:9001,edge2=10.0.0.13:9002"], 2
+    ) == expected
+    assert parse_edge_endpoints(
+        ["edge2=10.0.0.13:9002", "edge1=10.0.0.12:9001"], 2
+    ) == expected
+
+
+def test_parse_edge_endpoints_empty_is_loopback() -> None:
+    assert parse_edge_endpoints([], 2) is None
+    assert parse_edge_endpoints([""], 2) is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ["edge1=10.0.0.12"],  # no port
+        ["edge1=:9001"],  # no host
+        ["edge1=10.0.0.12:notaport"],  # non-integer port
+        ["edge1=10.0.0.12:0"],  # port below range
+        ["edge1=10.0.0.12:70000"],  # port above range
+        ["edge1=10.0.0.12:9001,edge1=10.0.0.13:9002"],  # duplicate edge id
+        ["edge3=10.0.0.14:9003"],  # unknown edge id
+        ["host1=10.0.0.12:9001"],  # not an edgeN id
+        ["edge1=10.0.0.12:9001"],  # incomplete coverage for --edges 2
+    ],
+)
+def test_parse_edge_endpoints_rejects_malformed_input(raw: list[str]) -> None:
+    with pytest.raises(ValueError):
+        parse_edge_endpoints(raw, 2)
+
+
+def test_cli_rejects_malformed_edge_endpoints(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="--edge-endpoints"):
+        main(_campaign_args(tmp_path, **{"--edge-endpoints": "edge1=bogus"}))
+
+
+def test_cli_plumbs_edge_endpoints_into_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[dict] = []
+
+    async def stub(**kwargs: object) -> PhysicalRunResult:
+        captured.append(kwargs)  # type: ignore[arg-type]
+        return _fake_physical_result()
+
+    monkeypatch.setattr(run_physical, "run_physical_cell", stub)
+    code = main(
+        _campaign_args(
+            tmp_path,
+            **{
+                "--edges": "2",
+                "--edge-endpoints": "edge1=10.0.0.12:9001,edge2=10.0.0.13:9002",
+                "--intake-host": "pi-01",
+                "--run-id": "remote-1",
+            },
+        )
+    )
+    assert code == 0
+    # The parsed (host, port) list reaches the topology layer, ordered edge1..N.
+    assert captured[0]["edge_endpoints"] == [
+        ("10.0.0.12", 9001),
+        ("10.0.0.13", 9002),
+    ]
+    records = _read_records(tmp_path / "physical.jsonl")
+    assert records[0]["metadata"]["edge_endpoints"] == {
+        "edge1": "10.0.0.12:9001",
+        "edge2": "10.0.0.13:9002",
+    }
+    assert records[0]["metadata"]["intake_host"] == "pi-01"
+
+
+def test_loopback_default_records_no_edge_endpoints(tmp_path: Path) -> None:
+    out = tmp_path / "physical.jsonl"
+    code = main(_campaign_args(tmp_path, **{"--run-id": "loopback-meta"}))
+    assert code == 0
+    record = _read_records(out)[0]
+    assert "edge_endpoints" not in record["metadata"]
+    assert "intake_host" not in record["metadata"]

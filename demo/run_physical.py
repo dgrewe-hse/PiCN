@@ -12,6 +12,11 @@ Records carry the T_intent decomposition plus, for the LLM backend, the
 ``inference_ms``/``transport_ms`` split per leaf — model inference is **never**
 attributed to the overlay.
 
+With ``--edge-endpoints`` the intake targets the deployed edges' UDP ports
+(remote bench, no in-process edge nodes built); without it the same topology
+is built in-process on loopback (local mechanism check, not a deployment
+measurement). The targeted endpoints are recorded in the record metadata.
+
 **Cost preflight** (A-011 style — refuse loudly): the projected wall-clock
 (``runs_per_cell × cells × per-run estimate`` from the design v4 §5.3 cost
 matrix) is printed before any campaign; a projection over ``--max-hours``
@@ -27,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -55,12 +61,71 @@ _LLM_OFF_PI_S = 10.0
 _DEFAULT_MAX_HOURS = 6.0
 _DEFAULT_SKEW_THRESHOLD_MS = 1.0
 
+# Endpoint keys are the edge ids produced by split_leaves (edge1 .. edgeN).
+_EDGE_ID_RE = re.compile(r"edge[0-9]+")
+
 _EXIT_OK = 0
 _EXIT_COST_REFUSED = 3
 
 
 def _parse_float_list(raw: str) -> list[float]:
     return [float(x) for x in parse_str_list(raw)]
+
+
+def parse_edge_endpoints(
+    raw: list[str], edges: int
+) -> list[tuple[str, int]] | None:
+    """Parse ``--edge-endpoints`` items into the per-edge endpoint list.
+
+    Accepts ``edgeN=host:port`` tokens, comma-separated within an item and/or
+    across repeated items.
+
+    :return: ``[(host, port), ...]`` ordered ``edge1`` .. ``edgeN`` — the
+        per-edge representation ``run_physical_cell`` targets — or ``None``
+        when no tokens are given (in-process loopback edges).
+    :raises ValueError: On malformed tokens, unknown or duplicate edge ids, or
+        incomplete coverage of ``edge1`` .. ``edgeN``.
+    """
+    mapping: dict[str, tuple[str, int]] = {}
+    for item in raw:
+        for token in item.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            key, sep, value = token.partition("=")
+            if not sep or not key or not value:
+                raise ValueError(
+                    f"malformed endpoint {token!r}, expected edgeN=host:port"
+                )
+            if key in mapping:
+                raise ValueError(f"duplicate endpoint for edge {key!r}")
+            if not _EDGE_ID_RE.fullmatch(key):
+                raise ValueError(f"unknown edge id {key!r}, expected edge1..edge{edges}")
+            host, _, port_raw = value.rpartition(":")
+            if not host:
+                raise ValueError(
+                    f"malformed host in {token!r}, expected edgeN=host:port"
+                )
+            try:
+                port = int(port_raw)
+            except ValueError:
+                raise ValueError(
+                    f"malformed port in {token!r}: {port_raw!r} is not an integer"
+                ) from None
+            if not 1 <= port <= 65535:
+                raise ValueError(f"port out of range in {token!r}: {port}")
+            mapping[key] = (host, port)
+    if not mapping:
+        return None
+    expected = [f"edge{number}" for number in range(1, edges + 1)]
+    missing = [edge_id for edge_id in expected if edge_id not in mapping]
+    unknown = [edge_id for edge_id in mapping if edge_id not in expected]
+    if missing or unknown:
+        raise ValueError(
+            f"--edge-endpoints must cover edge1..edge{edges} exactly once "
+            f"(missing: {missing or 'none'}, unknown: {unknown or 'none'})"
+        )
+    return [mapping[edge_id] for edge_id in expected]
 
 
 def _cell_count(seeds: int, k_values: int, leaf_latencies: int, backend: str) -> int:
@@ -113,8 +178,26 @@ def _run_record(
     k: int,
     runs_per_cell: int,
     picn_commit: str | None,
+    edge_endpoints: list[tuple[str, int]] | None = None,
+    intake_host: str | None = None,
 ) -> dict[str, Any]:
     backend = result.backend
+    metadata: dict[str, Any] = {
+        "transport": PUBLISHABLE_TRANSPORT,
+        "edges": result.edges,
+        "hosts": result.hosts,
+        "picn_commit": picn_commit,
+        "nature": "physical_deployment",
+    }
+    # Remote-bench audit trail: which deployed edges (host:port) the intake
+    # targeted. Loopback runs (no --edge-endpoints) carry no entry.
+    if edge_endpoints is not None:
+        metadata["edge_endpoints"] = {
+            f"edge{index + 1}": f"{host}:{port}"
+            for index, (host, port) in enumerate(edge_endpoints)
+        }
+    if intake_host:
+        metadata["intake_host"] = intake_host
     return {
         "kind": PHYSICAL_RUN_KIND,
         "record_type": "run",
@@ -128,13 +211,7 @@ def _run_record(
         "leaf_latency_s": result.leaf_latency_s,
         "transport": PUBLISHABLE_TRANSPORT,
         "dispatch": result.dispatch,
-        "metadata": {
-            "transport": PUBLISHABLE_TRANSPORT,
-            "edges": result.edges,
-            "hosts": result.hosts,
-            "picn_commit": picn_commit,
-            "nature": "physical_deployment",
-        },
+        "metadata": metadata,
         "elapsed_ms": result.elapsed_ms,
         "trace_root_hex": result.trace_root_hex,
         "trace_root_verified": result.trace_root_verified,
@@ -180,6 +257,11 @@ async def _async_main(args: argparse.Namespace) -> int:
         raise SystemExit("--k must list at least one value")
     if args.edges < 1:
         raise SystemExit(f"--edges must be >= 1, got {args.edges}")
+
+    try:
+        edge_endpoints = parse_edge_endpoints(args.edge_endpoints, args.edges)
+    except ValueError as exc:
+        raise SystemExit(f"--edge-endpoints unusable: {exc}") from exc
 
     leaf_latencies = _parse_float_list(args.leaf_latency_s) \
         if args.backend != "llm" else [None]  # type: ignore[list-item]
@@ -237,6 +319,7 @@ async def _async_main(args: argparse.Namespace) -> int:
                             args.llm_placement if args.backend == "llm" else None
                         ),
                         model_config=args.model_config if args.backend == "llm" else None,
+                        edge_endpoints=edge_endpoints,
                         observer_on=args.observer == "on",
                     )
                     record = _run_record(
@@ -245,6 +328,8 @@ async def _async_main(args: argparse.Namespace) -> int:
                         k=k,
                         runs_per_cell=args.runs_per_cell,
                         picn_commit=_git_head(),
+                        edge_endpoints=edge_endpoints,
+                        intake_host=args.intake_host,
                     )
                     handle.write(json.dumps(record, sort_keys=True) + "\n")
                     handle.flush()
@@ -277,6 +362,21 @@ def main(argv: list[str] | None = None) -> int:
         help="LLM stage A (on-Pi Ollama) or stage C (off-Pi GPU host)",
     )
     parser.add_argument("--edges", type=int, default=2, help="Edge count N (>= 1)")
+    parser.add_argument(
+        "--edge-endpoints",
+        action="append",
+        default=[],
+        help="Remote edge UDP endpoint per edge, edgeN=host:port (comma list "
+        "or repeated flag), e.g. edge1=10.0.0.12:9001,edge2=10.0.0.13:9002. "
+        "When set, the intake targets the deployed edges and builds no "
+        "in-process edge nodes; when omitted, edges are in-process loopback",
+    )
+    parser.add_argument(
+        "--intake-host",
+        default="",
+        help="Intake host name recorded in the metadata (e.g. when the "
+        "runner host is not the bench alias)",
+    )
     parser.add_argument("--seeds", default="1-5", help="Seeds (range or list)")
     parser.add_argument("--k", default="8", help="Leaf counts (comma/range)")
     parser.add_argument(
