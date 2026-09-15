@@ -37,7 +37,7 @@ from typing import Any
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pydantic import BaseModel
 
-from PiCN.Layers.LinkLayer.Interfaces import UDP4Interface
+from PiCN.Layers.LinkLayer.Interfaces import BaseInterface, UDP4Interface
 from PiCN.Layers.PacketEncodingLayer.Encoder import NdnTlvEncoder
 from PiCN.ProgramLibs.AgenticForwarder import AgenticForwarder
 from PiCN.ProgramLibs.runtime import Runtime
@@ -60,6 +60,37 @@ PHYSICAL_TRANSPORT = "udp"
 _CAPABILITY_BASE: tuple[str, ...] = ("cap", "fwd", "hospital", "beds")
 _EDGE_HOST_LOOPBACK = "127.0.0.1"
 _SERVED_BY_LOOPBACK = "localhost"
+
+
+async def _close_udp_interface(iface: BaseInterface) -> None:
+    """Fully close one interface: datagram transport first, then raw socket.
+
+    ``UDP4Interface.register()`` hands the already-bound socket to
+    ``loop.create_datagram_endpoint`` (ADR-008 addendum); only the transport
+    close deregisters it from the event loop's selector. Closing just the raw
+    socket leaves the stale transport registered, and when a later topology's
+    fresh socket reuses that file descriptor the stale transport's deferred
+    close removes the *new* socket's reader and closes it — the next
+    ``run_physical_cell`` cell then receives no datagrams at all (the campaign
+    defect: every cell after the first served zero leaves).
+
+    :param iface: The interface to close (UDP4 or any ``BaseInterface``).
+    """
+    transport = getattr(iface, "_transport", None)
+    if transport is not None:
+        try:
+            transport.close()
+        except Exception:
+            pass
+    close = getattr(iface, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+    # Yield so the loop runs the transport's connection-lost callback before
+    # the next cell binds new sockets on possibly reused descriptors.
+    await asyncio.sleep(0)
 
 
 def leaf_name_str(index: int) -> str:
@@ -205,6 +236,12 @@ class MultiEdgePort:
     async def stop(self) -> None:
         for port in self._ports.values():
             await port.stop()
+            # PicnSubstratePort.stop() closes the raw sockets; the datagram
+            # transports must also be deregistered from the loop or they
+            # poison the next topology's sockets (fd reuse, see
+            # _close_udp_interface).
+            for iface in port.interfaces:
+                await _close_udp_interface(iface)
 
     def parse_name(self, s: str) -> Name:
         return self._primary.parse_name(s)
@@ -351,6 +388,11 @@ class _PhysicalTopologyHandle:
                 )
             except Exception:
                 pass
+            # The forwarder's layer tasks stop, but its interfaces' datagram
+            # transports stay registered with the loop unless closed here
+            # (same fd-reuse hazard as the intake ports).
+            for iface in forwarder.interfaces:
+                await _close_udp_interface(iface)
 
 
 async def build_physical_topology(
