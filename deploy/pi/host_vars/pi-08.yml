@@ -1,0 +1,20 @@
+# pi-08 — second producer for edge2: dedicated deterministic serving host.
+# Same prefix slice as edge2/pi-05 (split-deployment variant of the h5-h8
+# cell: point the intake cell at 10.0.0.18:9104 instead of edge2:9002).
+# Completes the 8-host minimum the physical_publishable gate requires
+# (intake, 2 edges, 3 producers, llm, observer).
+picn_role: "producer"
+edge_id: "edge2"
+picn_listen_port: 9104
+picn_owned_prefixes:
+  - /cap/fwd/hospital/beds/h5
+  - /cap/fwd/hospital/beds/h6
+  - /cap/fwd/hospital/beds/h7
+  - /cap/fwd/hospital/beds/h8
+picn_backend: "deterministic"
+picn_llm_placement: ""
+picn_model_config: ""
+
+# Upstream peer = intake (edge2 in a two-hop wiring).
+picn_peer_host: "10.0.0.11"
+picn_peer_port: 9100
