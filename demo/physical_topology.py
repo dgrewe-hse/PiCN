@@ -411,7 +411,10 @@ async def build_physical_topology(
 
     :param edge_endpoints: Optional ``[(host, udp_port), ...]`` per edge. When
         absent, edges are built in-process on ephemeral loopback UDP ports
-        (the no-hardware verification mode).
+        (the no-hardware verification mode). When given, the edges are the
+        deployed remote nodes: no in-process forwarder is constructed (the
+        remote edge owns its UDP socket, see ``demo.physical_node``) and the
+        intake's ``PicnSubstratePort`` targets each remote endpoint directly.
     """
     if edges < 1:
         raise ValueError(f"edges must be >= 1, got {edges}")
@@ -426,6 +429,7 @@ async def build_physical_topology(
     leaf_owner_host: dict[int, str] = {}
 
     for edge_number, (edge_id, leaf_indices) in enumerate(split):
+        edge: AgenticForwarder | None = None
         if edge_endpoints is None:
             interface = UDP4Interface(0)
             edge = AgenticForwarder(
@@ -437,17 +441,9 @@ async def build_physical_topology(
                 runtime=Runtime.ASYNC,
             )
             edge_endpoints_resolved.append((_EDGE_HOST_LOOPBACK, interface.get_port()))
+            forwarders[edge_id] = edge
         else:
-            host, port_number = edge_endpoints[edge_number]
-            edge_endpoints_resolved.append((host, port_number))
-            edge = AgenticForwarder(
-                port=port_number,
-                encoder=encoder,
-                log_level=log_level,
-                ageing_interval=1,
-                runtime=Runtime.ASYNC,
-            )
-        forwarders[edge_id] = edge
+            edge_endpoints_resolved.append(edge_endpoints[edge_number])
         owned: list[str] = []
         for leaf_index in leaf_indices:
             wire_name = _leaf_wire_name(leaf_index)
@@ -458,8 +454,11 @@ async def build_physical_topology(
                 model_config=model_config,
                 llm_placement=llm_placement,
             )
-            desc = _descriptor_for(wire_name, input_schema, output_schema)
-            edge.register_capability(desc, leaf_backend, backend_label=backend)
+            if edge is not None:
+                # In-process edges register the producers locally; on remote
+                # edges the producers are registered by the deployed node.
+                desc = _descriptor_for(wire_name, input_schema, output_schema)
+                edge.register_capability(desc, leaf_backend, backend_label=backend)
             leaf_backends[leaf_index] = leaf_backend
             edge_of_leaf[leaf_index] = edge_id
             leaf_owner_host[leaf_index] = edge_endpoints_resolved[-1][0]

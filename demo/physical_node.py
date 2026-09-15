@@ -208,8 +208,7 @@ async def serve_edge(
     from PiCN.ProgramLibs.AgenticForwarder import AgenticForwarder
     from PiCN.ProgramLibs.runtime import Runtime
 
-    from agentic.agentic_layer.descriptor import parse_descriptor_body
-    from agentic.trust import generate_ed25519_private_key, sign_artefact, verify_artefact
+    from agentic.port.names import Name
 
     encoder = NdnTlvEncoder()
     forwarder = AgenticForwarder(
@@ -222,26 +221,15 @@ async def serve_edge(
     )
     serving = _build_serving_config(config)
     for prefix, backend, (input_schema, output_schema) in serving:
-        name = tuple(part.encode("utf-8") for part in prefix.strip("/").split("/"))
-        key = generate_ed25519_private_key()
-        body = {
-            "kind": "capability-descriptor",
-            "domain": "hospital",
-            "task": "beds",
-            "version": "1.0.0",
-            "constraints": {},
-            "attestation_policy": "optional",
-            "reputation_threshold": "0.5",
-            "cost": "1",
-            "input_schema": input_schema,
-            "output_schema": output_schema,
-            "freshness_bound_s": 60,
-            "revocation_pointer": "none",
-        }
-        desc = parse_descriptor_body(
-            verify_artefact(sign_artefact(body, key)),
-            capability_path=(b"hospital", b"beds"),
+        # The registry is keyed by exact descriptor name: the deployed node
+        # must register under the routed wire name (/cap/fwd/hospital/beds/hN)
+        # — the issuer-bound capability name parse_descriptor_body produces
+        # would never match the intake's Interest (same binding as
+        # build_physical_topology's in-process edges).
+        wire_name = Name(
+            tuple(part.encode("utf-8") for part in prefix.strip("/").split("/"))
         )
+        desc = _descriptor_for(wire_name, input_schema, output_schema)
         forwarder.register_capability(desc, backend, backend_label=config.backend)
 
     await forwarder.start_forwarder_async()
