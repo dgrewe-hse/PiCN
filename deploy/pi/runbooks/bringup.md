@@ -2,7 +2,7 @@
 
 Ordered commands to provision, deploy, verify, run a campaign, and collect.
 Run from the repository root on the operator workstation; `ssh` access to
-`pi-01 … pi-07` with your admin user is assumed (no credentials live in this
+`pi-01 … pi-08` with your admin user is assumed (no credentials live in this
 repository). Placeholders to fill before starting:
 
 - `PICN_COMMIT` — deployed commit, e.g. `$(git rev-parse HEAD)`
