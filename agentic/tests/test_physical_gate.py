@@ -391,6 +391,60 @@ def test_gate_refuses_non_cell_records() -> None:
     assert physical_publishable(_run()) is False  # a run, not a cell
 
 
+def test_gate_rejects_malformed_snapshots() -> None:
+    """Collector-merged snapshots may carry junk in optional fields; every
+    structural shortcut in the gate must reject, never crash or fail open."""
+    cell = _valid_cell()
+    cell["metadata"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["metadata"]["hosts"] = "pi-01"  # a string is not a host sequence
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["node_markers"][0]["deployed_commit"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["picn_commit"] = None
+    cell["metadata"]["picn_commit"] = None  # no commit attested at all
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["n"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["runs_per_cell_required"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["median_ms"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["leaves"] = []
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["clock"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["clock"]["skew_measured_ms"] = "0.2"
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    cell["clock"]["skew_threshold_ms"] = None
+    assert physical_publishable(cell) is False
+
+    cell = _valid_cell()
+    for leaf in cell["leaves"]:
+        leaf["served_by_host"] = "pi-99"  # no run marker for that host
+    assert physical_publishable(cell) is False
+
+
 # --- namespace ---------------------------------------------------------------
 
 
