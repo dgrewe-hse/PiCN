@@ -33,8 +33,11 @@ from typing import Any
 from agentic.benchmark.metadata import _git_head, working_tree_dirty
 from agentic.benchmark.physical import PHYSICAL_RUN_KIND, PUBLISHABLE_TRANSPORT
 from agentic.benchmark.sweep import parse_int_list, parse_str_list
-from agentic.binding.pydantic_ai_backend import ModelConfigError, load_model_preference
+# demo.physical_topology must be imported before agentic.binding: on a cold
+# interpreter, agentic.binding pulls agentic.agentic_layer via the registry,
+# whose producer re-imports the partially initialized agentic.binding.registry.
 from demo.physical_topology import run_physical_cell
+from agentic.binding.pydantic_ai_backend import ModelConfigError, load_model_preference
 
 _DEFAULT_OUT_DIR = Path(__file__).resolve().parent / "results" / "physical"
 

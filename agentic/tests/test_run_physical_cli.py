@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -83,6 +85,36 @@ def test_cli_flag_surface(tmp_path: Path) -> None:
 def test_cli_rejects_zero_edges() -> None:
     with pytest.raises(SystemExit):
         main(["--edges", "0", "--allow-dirty"])
+
+
+def test_cli_runs_cold_no_import_cycle() -> None:
+    """Cold-interpreter regression: ``python -m demo.run_physical`` must not
+    crash with the registry<->agentic_layer import cycle (invoked here in a
+    fresh subprocess with no pre-warmed import order)."""
+    repo_root = Path(run_physical.__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "demo.run_physical",
+            "--backend", "llm",
+            "--llm-placement", "on-pi",
+            "--edges", "2",
+            "--seeds", "1",
+            "--k", "8",
+            "--runs-per-cell", "1",
+            "--dry-run",
+            "--max-hours", "0",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        check=False,
+        timeout=60,
+    )
+    assert "ImportError" not in proc.stderr
+    assert "Cost preflight" in proc.stdout
+    assert proc.returncode == 3
 
 
 # --- namespace isolation -----------------------------------------------------
