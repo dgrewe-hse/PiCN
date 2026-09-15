@@ -373,9 +373,14 @@ def physical_publishable(cell: Mapping[str, Any]) -> bool:
 
     # Condition 8 (NF-5): multi-edge breadth is required for deterministic
     # multi-edge cells; >= 2 edges must have served at least one leaf each.
-    # LLM cells are exempt (recorded ``multi_edge_breadth_required=false``) —
-    # their claim is substrate-share under inference, not fan-out breadth.
-    if cell.get("multi_edge_breadth_required") is True:
+    # LLM cells are exempt — their claim is substrate-share under inference,
+    # not fan-out breadth. The requirement is derived here from backend/edges
+    # (exactly as build_physical_cell does) rather than read from the snapshot:
+    # collector-merged snapshots can carry an unset
+    # ``multi_edge_breadth_required`` flag, and trusting it fails the gate
+    # open.
+    multi_edge_required = backend == "deterministic" and edges >= 2
+    if multi_edge_required:
         per_edge: Mapping[str, Any] = cell.get("per_edge_leaf_counts") or {}
         serving_edges = sum(
             1 for count in per_edge.values() if isinstance(count, int) and count >= 1

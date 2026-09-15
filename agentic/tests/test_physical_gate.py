@@ -348,6 +348,24 @@ def test_gate_deterministic_multi_edge_requires_two_serving_edges() -> None:
     assert physical_publishable(cell) is False
 
 
+def test_gate_fail_closed_when_breadth_flag_missing() -> None:
+    """Collector-merged snapshots can carry ``multi_edge_breadth_required``
+    unset (None); the gate must derive the requirement from backend/edges
+    (as build_physical_cell does), not skip the breadth check — fail closed."""
+    cell = _valid_cell()
+    cell["multi_edge_breadth_required"] = None
+    for leaf in cell["leaves"]:
+        leaf["edge_id"] = "edge1"
+    cell["per_edge_leaf_counts"] = {"edge1": cell["n"]}
+    assert physical_publishable(cell) is False
+
+
+def test_gate_derives_breadth_requirement_when_flag_missing() -> None:
+    cell = _valid_cell()
+    cell["multi_edge_breadth_required"] = None
+    assert physical_publishable(cell) is True
+
+
 def test_gate_llm_cells_exempt_from_multi_edge_breadth() -> None:
     runs = [
         _run(
