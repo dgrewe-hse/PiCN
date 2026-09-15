@@ -14,8 +14,8 @@ picn_transport: "udp"
 picn_leaf_latencies: "0.05"
 
 # Edge endpoints of the cell under test (host:port pairs, one per edge).
-# The committed runner builds the same topology in-process; these document
-# the serving hosts the campaign targets (see runbooks/bringup.md).
+# Passed to the runner as --edge-endpoints (edgeN=host:port); without the
+# flag the runner builds the topology in-process on loopback.
 picn_edge_endpoints:
   - "10.0.0.12:9001"   # edge1
   - "10.0.0.13:9002"   # edge2

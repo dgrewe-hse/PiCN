@@ -61,8 +61,12 @@ Checks the deployed interpreter version, the env-contract imports
 
 ## 4. Run the campaign (from `pi-01`)
 
-Deterministic 2-edge cell (co-located variant, intake -> edge1/edge2),
-invoking the runner exactly as its CLI defines:
+Deterministic 2-edge cell against the **deployed** edges, invoking the runner
+exactly as its CLI defines. `--edge-endpoints` points the intake at the
+serving `host:port` of each edge (from `group_vars/intake.yml`,
+`picn_edge_endpoints`); the runner then builds no in-process edge nodes and
+records the targeted endpoints in each record's metadata
+(`metadata["edge_endpoints"]`):
 
 ```bash
 ssh pi-01
@@ -71,18 +75,23 @@ sudo -u picn env PICN_COMMIT=<commit-from-step-1> \
   /opt/picn-venv/bin/python -m demo.run_physical \
   --backend deterministic --edges 2 --seeds 1 --k 8 \
   --leaf-latency-s 0.05 --runs-per-cell 30 \
+  --edge-endpoints edge1=10.0.0.12:9001,edge2=10.0.0.13:9002 \
+  --intake-host pi-01 \
   --run-id "${PICN_RUN_ID}" \
   --out /var/lib/picn/results/physical/${PICN_RUN_ID}.jsonl
 ```
 
-> **Known delta (flagged, not silently absorbed):** the committed runner
-> builds the cell topology in-process (loopback edge endpoints). Injecting
-> the real bench endpoints (`picn_edge_endpoints` from `group_vars/intake.yml`
-> — `10.0.0.12:9001`, `10.0.0.13:9002`, or `10.0.0.16:9103` for LLM cells)
-> into `run_physical_cell` is the pending follow-up; the per-node services
-> deployed in step 2 already speak the env contract it will target.
+Without `--edge-endpoints` the same runner builds the cell topology
+in-process on loopback — a mechanism check, not a deployment measurement
+(the `physical_publishable` gate rejects it as such).
 
-Equivalent systemd path (uses the node entrypoint's intake delegation):
+LLM cells target the LLM edge instead (`10.0.0.16:9103` for on-Pi Ollama
+stage A), drop `--leaf-latency-s` (Finding 9), and pass
+`--backend llm --llm-placement on-pi --model-config /var/lib/picn/results/model.toml`;
+LLM cells need `n >= 15` runs per cell (deterministic: `n >= 30`).
+
+In-process loopback variant (systemd path; the node entrypoint's intake
+delegation builds the same runner without `--edge-endpoints`):
 
 ```bash
 sudo systemctl set-environment PICN_RUN_ID=${PICN_RUN_ID}
